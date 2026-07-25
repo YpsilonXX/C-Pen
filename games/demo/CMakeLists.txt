@@ -4,4 +4,4 @@ file(GLOB_RECURSE CPEN_DEMO_SOURCES CONFIGURE_DEPENDS
 
 add_executable(cpen_demo ${CPEN_DEMO_SOURCES})
 
-target_link_libraries(cpen_demo PRIVATE cpen)
+target_link_libraries(cpen_demo PRIVATE cpen cpen_warnings)

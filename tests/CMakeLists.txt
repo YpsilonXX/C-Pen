@@ -9,12 +9,18 @@ FetchContent_Declare(
 
 FetchContent_MakeAvailable(catch2)
 
+# Catch2 ships CMake helpers in extras/; catch_discover_tests registers every
+# TEST_CASE as its own CTest entry, so `ctest` reports per-case results instead
+# of one opaque pass/fail for the whole binary.
+list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
+include(Catch)
+
 file(GLOB_RECURSE CPEN_TEST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/*.cc
 )
 
 add_executable(cpen_tests ${CPEN_TEST_SOURCES})
 
-target_link_libraries(cpen_tests PRIVATE cpen Catch2::Catch2WithMain)
+target_link_libraries(cpen_tests PRIVATE cpen cpen_warnings Catch2::Catch2WithMain)
 
-add_test(NAME cpen_tests COMMAND cpen_tests)
+catch_discover_tests(cpen_tests)
