@@ -43,7 +43,14 @@ target_include_directories(cpen
 
 target_compile_features(cpen PUBLIC cxx_std_23)
 
+# GLFW must never pull in its own OpenGL headers — glad owns that role.
+# PUBLIC so any consumer including <GLFW/glfw3.h> (e.g. games/demo) gets it too,
+# making the glad-before-glfw include order requirement moot everywhere.
+target_compile_definitions(cpen PUBLIC GLFW_INCLUDE_NONE)
+
 target_link_libraries(cpen
+    PRIVATE
+        cpen_warnings
     PUBLIC
         glfw
         glm::glm
