@@ -1,0 +1,4 @@
+# C-Pen demo game manifest.
+# Format is not yet locked (deferred per architecture decisions) — placeholder fields only.
+name = "C-Pen Demo"
+version = "0.0.1"
