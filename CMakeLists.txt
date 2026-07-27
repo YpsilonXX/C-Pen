@@ -9,6 +9,12 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(CPEN_BUILD_DEMO "Build the demo game executable" ON)
 option(CPEN_BUILD_TESTS "Build the C-Pen test suite" ON)
 
+# Tests that need a real GL context live in their own executable, which CTest is
+# deliberately not told about: `ctest` must stay runnable anywhere, including on a
+# machine with no GPU or display, while these are run by hand. Turn this off to
+# build the suite without them at all.
+option(CPEN_BUILD_GPU_TESTS "Build tests that require an OpenGL context" ON)
+
 # Comma-separated sanitizer list, empty to disable. Configure a second build
 # directory with it rather than switching the main one back and forth:
 #   cmake -S . -B build-asan -DCMAKE_BUILD_TYPE=Debug -DCPEN_SANITIZE=address,undefined
