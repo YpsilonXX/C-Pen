@@ -51,6 +51,7 @@ target_compile_definitions(cpen PUBLIC GLFW_INCLUDE_NONE)
 target_link_libraries(cpen
     PRIVATE
         cpen_warnings
+        cpen_sanitizers
     PUBLIC
         glfw
         glm::glm

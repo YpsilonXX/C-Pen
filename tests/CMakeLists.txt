@@ -25,6 +25,6 @@ add_executable(cpen_tests ${CPEN_TEST_SOURCES})
 # so a test file's location never affects the include path it has to spell.
 target_include_directories(cpen_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
-target_link_libraries(cpen_tests PRIVATE cpen cpen_warnings Catch2::Catch2WithMain)
+target_link_libraries(cpen_tests PRIVATE cpen cpen_warnings cpen_sanitizers Catch2::Catch2WithMain)
 
 catch_discover_tests(cpen_tests)
