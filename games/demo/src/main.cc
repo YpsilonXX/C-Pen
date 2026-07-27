@@ -1,15 +1,17 @@
 #include <cpen/app/application.hh>
 #include <cpen/core/log.hh>
+#include <cpen/render/buffer.hh>
+#include <cpen/render/draw.hh>
 #include <cpen/render/shader.hh>
+#include <cpen/render/vertex_array.hh>
 #include <cpen/runtime/game_state.hh>
 #include <cpen/runtime/state_stack.hh>
 
-#include <glad/glad.h>
+#include <glm/glm.hpp>
 
 #include <array>
 #include <cmath>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -63,21 +65,19 @@ void main()
          0.0f,  0.6f,    0.0f, 0.0f, 1.0f,
     };
 
-    constexpr GLuint POSITION_ATTRIBUTE = 0;
-    constexpr GLuint COLOR_ATTRIBUTE = 1;
+    constexpr std::size_t TRIANGLE_VERTEX_COUNT = 3;
 
-    constexpr GLsizei VERTEX_STRIDE = static_cast<GLsizei>(5 * sizeof(float));
-    constexpr std::uintptr_t POSITION_OFFSET = 0;
-    constexpr std::uintptr_t COLOR_OFFSET = 2 * sizeof(float);
+    constexpr glm::vec4 BACKGROUND_COLOR{0.1f, 0.1f, 0.15f, 1.0f};
 
     /// F1 smoke test: an otherwise empty state that clears the window, draws a
     /// single triangle and quits on Escape. Its purposes are to prove that a state
     /// drives the engine through the stack rather than through a loop written in
     /// the game, and that the render layer can be driven from a state.
     ///
-    /// The shader is already render::Shader. The buffers below are not yet
-    /// anything — TODO(F1): render::Buffer and render::VertexArray replace them,
-    /// after which this state stops naming GL types at all.
+    /// Nothing here names a GL type or includes a GL header any more: the shader,
+    /// the vertex data and the draw call all go through render/. What is still
+    /// missing is a projection — positions are raw normalised device coordinates,
+    /// so the triangle stretches with the window.
     class DemoState final : public runtime::GameState
     {
     public:
@@ -116,9 +116,9 @@ void main()
             }
             else if (const auto* resize = std::get_if<platform::ResizeEvent>(&event))
             {
-                glViewport(0, 0,
-                           static_cast<GLsizei>(resize->width),
-                           static_cast<GLsizei>(resize->height));
+                render::set_viewport(0, 0,
+                                     static_cast<int>(resize->width),
+                                     static_cast<int>(resize->height));
                 log::debug(log::Category::APP, "framebuffer resized to {}x{}",
                            resize->width, resize->height);
                 return true;
@@ -134,10 +134,9 @@ void main()
 
         void render() override
         {
-            glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            render::clear(BACKGROUND_COLOR);
 
-            if (!this->shader.has_value())
+            if (!this->shader.has_value() || !this->triangle_array.has_value())
             {
                 return;
             }
@@ -150,9 +149,8 @@ void main()
             const auto tint = static_cast<float>(0.75 + 0.25 * std::sin(this->elapsed_time * 2.0));
             this->shader->set_uniform("tint", tint);
 
-            glBindVertexArray(this->vertex_array);
-            glDrawArrays(GL_TRIANGLES, 0, 3);
-            glBindVertexArray(0);
+            render::draw_arrays(*this->triangle_array, render::Primitive::TRIANGLES,
+                                TRIANGLE_VERTEX_COUNT);
 
             render::Shader::unbind();
         }
@@ -173,52 +171,43 @@ void main()
 
             this->shader = std::move(*created);
 
-            // The core profile has no default vertex array object, so one must be
-            // bound before any attribute state can be recorded.
-            glGenVertexArrays(1, &this->vertex_array);
-            glBindVertexArray(this->vertex_array);
+            this->triangle_vertices = render::Buffer::vertex(TRIANGLE_VERTICES);
 
-            glGenBuffers(1, &this->vertex_buffer);
-            glBindBuffer(GL_ARRAY_BUFFER, this->vertex_buffer);
-            glBufferData(GL_ARRAY_BUFFER,
-                         static_cast<GLsizeiptr>(sizeof(TRIANGLE_VERTICES)),
-                         TRIANGLE_VERTICES.data(),
-                         GL_STATIC_DRAW);
-
-            // The attribute pointers are recorded into the bound vertex array,
-            // together with the buffer they read from; the binding above is
-            // therefore part of the state being captured, not a prerequisite of
-            // the draw call.
-            glVertexAttribPointer(POSITION_ATTRIBUTE, 2, GL_FLOAT, GL_FALSE, VERTEX_STRIDE,
-                                  reinterpret_cast<const void*>(POSITION_OFFSET));
-            glEnableVertexAttribArray(POSITION_ATTRIBUTE);
-
-            glVertexAttribPointer(COLOR_ATTRIBUTE, 3, GL_FLOAT, GL_FALSE, VERTEX_STRIDE,
-                                  reinterpret_cast<const void*>(COLOR_OFFSET));
-            glEnableVertexAttribArray(COLOR_ATTRIBUTE);
-
-            glBindVertexArray(0);
-            glBindBuffer(GL_ARRAY_BUFFER, 0);
+            this->triangle_array.emplace();
+            this->triangle_array->attach(*this->triangle_vertices,
+                                         render::VertexLayout{
+                                             .attributes = {
+                                                 {.type = render::AttributeType::FLOAT,
+                                                  .component_count = 2},
+                                                 {.type = render::AttributeType::FLOAT,
+                                                  .component_count = 3},
+                                             },
+                                             .first_location = 0,
+                                         });
 
             log::info(log::Category::RENDER, "triangle ready: array {}, buffer {}",
-                      this->vertex_array, this->vertex_buffer);
+                      this->triangle_array->id(), this->triangle_vertices->id());
         }
 
         void destroy_triangle()
         {
-            // Deleting name 0 is defined as a no-op, so the partially constructed
-            // case needs no separate handling.
-            glDeleteBuffers(1, &this->vertex_buffer);
-            glDeleteVertexArrays(1, &this->vertex_array);
-
-            this->vertex_buffer = 0;
-            this->vertex_array = 0;
+            // Released in the reverse of the order they were created. The array
+            // reads from the buffer, so it goes first — the same reason the fields
+            // below are declared with the array last.
+            this->triangle_array.reset();
+            this->triangle_vertices.reset();
             this->shader.reset();
         }
 
         std::optional<render::Shader> shader;
-        GLuint vertex_array = 0;
-        GLuint vertex_buffer = 0;
+
+        // Declaration order is the lifetime contract: members are destroyed in
+        // reverse, so the array that reads from the buffer is torn down before the
+        // buffer it reads from. VertexArray does not own its buffers, and this is
+        // what stands in for that ownership.
+        std::optional<render::Buffer> triangle_vertices;
+        std::optional<render::VertexArray> triangle_array;
+
         double elapsed_time = 0.0;
     };
 }
