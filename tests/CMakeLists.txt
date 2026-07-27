@@ -21,6 +21,10 @@ file(GLOB_RECURSE CPEN_TEST_SOURCES CONFIGURE_DEPENDS
 
 add_executable(cpen_tests ${CPEN_TEST_SOURCES})
 
+# Shared test helpers are included as "support/...", relative to this directory,
+# so a test file's location never affects the include path it has to spell.
+target_include_directories(cpen_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
 target_link_libraries(cpen_tests PRIVATE cpen cpen_warnings Catch2::Catch2WithMain)
 
 catch_discover_tests(cpen_tests)
