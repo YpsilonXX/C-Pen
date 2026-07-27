@@ -1,15 +1,17 @@
 #include <cpen/app/application.hh>
 #include <cpen/core/log.hh>
+#include <cpen/render/shader.hh>
 #include <cpen/runtime/game_state.hh>
 #include <cpen/runtime/state_stack.hh>
 
 #include <glad/glad.h>
 
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
-#include <span>
+#include <optional>
 #include <string_view>
 #include <variant>
 
@@ -17,23 +19,24 @@ using namespace cpen;
 
 namespace
 {
-    /// Positions arrive already in clip space, so no transform is applied: the
-    /// point of this shader pair is to prove that the GL 3.3 core pipeline works
-    /// end to end, not to establish a coordinate system. The projection matrix
-    /// and the virtual 1920x1080 reference resolution belong to the render layer.
+    /// Positions arrive already in clip space, so no transform is applied. The
+    /// projection matrix and the virtual 1920x1080 reference resolution belong to
+    /// the render layer, which does not have them yet.
     ///
-    /// The per-vertex colour is passed through and interpolated by the rasteriser,
-    /// which makes a successful draw unmistakable: a uniform-coloured triangle
-    /// could still come from a shader that ignores its inputs.
+    /// The per-vertex colour is interpolated by the rasteriser, which makes a
+    /// successful draw unmistakable: a uniform-coloured triangle could still come
+    /// from a shader that ignores its inputs.
     constexpr const char* TRIANGLE_VERTEX_SHADER = R"(#version 330 core
 layout (location = 0) in vec2 in_position;
 layout (location = 1) in vec3 in_color;
+
+uniform float tint;
 
 out vec3 vertex_color;
 
 void main()
 {
-    vertex_color = in_color;
+    vertex_color = in_color * tint;
     gl_Position = vec4(in_position, 0.0, 1.0);
 }
 )";
@@ -67,105 +70,14 @@ void main()
     constexpr std::uintptr_t POSITION_OFFSET = 0;
     constexpr std::uintptr_t COLOR_OFFSET = 2 * sizeof(float);
 
-    /// Reads back the driver's diagnostic for a shader or program object.
-    ///
-    /// The shader and program variants differ only in the entry points used, which
-    /// is why the retrieval is parameterised rather than duplicated. The glad
-    /// typedefs are used verbatim: they carry the platform calling convention,
-    /// which a hand-written function-pointer type would drop on Windows. The
-    /// program-side typedefs name the same function types, so passing
-    /// glGetProgramiv and glGetProgramInfoLog here is exact, not a conversion.
-    std::string_view read_info_log(
-        const GLuint object,
-        const PFNGLGETSHADERIVPROC get_parameter,
-        const PFNGLGETSHADERINFOLOGPROC get_log,
-        const std::span<GLchar> buffer)
-    {
-        GLint length = 0;
-        get_parameter(object, GL_INFO_LOG_LENGTH, &length);
-        if (length <= 0)
-        {
-            return "(no diagnostic)";
-        }
-
-        GLsizei written = 0;
-        get_log(object, static_cast<GLsizei>(buffer.size()), &written, buffer.data());
-        return std::string_view{buffer.data(), static_cast<std::size_t>(written)};
-    }
-
-    /// Compiles one shader stage. Returns 0 on failure, having logged the
-    /// driver's diagnostic.
-    GLuint compile_shader(const GLenum stage, const char* source)
-    {
-        const GLuint shader = glCreateShader(stage);
-        glShaderSource(shader, 1, &source, nullptr);
-        glCompileShader(shader);
-
-        GLint compiled = GL_FALSE;
-        glGetShaderiv(shader, GL_COMPILE_STATUS, &compiled);
-        if (compiled == GL_FALSE)
-        {
-            std::array<GLchar, 1024> buffer{};
-            log::error(log::Category::RENDER, "shader compilation failed: {}",
-                       read_info_log(shader, glGetShaderiv, glGetShaderInfoLog, buffer));
-            glDeleteShader(shader);
-            return 0;
-        }
-
-        return shader;
-    }
-
-    /// Compiles and links the two stages into a program. Returns 0 on failure.
-    ///
-    /// The shader objects are deleted immediately after linking: the program keeps
-    /// them alive through its own reference, so the names may be released as soon
-    /// as they are attached and nothing else will refer to them again.
-    GLuint link_triangle_program()
-    {
-        const GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, TRIANGLE_VERTEX_SHADER);
-        if (vertex_shader == 0)
-        {
-            return 0;
-        }
-
-        const GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, TRIANGLE_FRAGMENT_SHADER);
-        if (fragment_shader == 0)
-        {
-            glDeleteShader(vertex_shader);
-            return 0;
-        }
-
-        const GLuint program = glCreateProgram();
-        glAttachShader(program, vertex_shader);
-        glAttachShader(program, fragment_shader);
-        glLinkProgram(program);
-
-        glDeleteShader(vertex_shader);
-        glDeleteShader(fragment_shader);
-
-        GLint linked = GL_FALSE;
-        glGetProgramiv(program, GL_LINK_STATUS, &linked);
-        if (linked == GL_FALSE)
-        {
-            std::array<GLchar, 1024> buffer{};
-            log::error(log::Category::RENDER, "program linking failed: {}",
-                       read_info_log(program, glGetProgramiv, glGetProgramInfoLog, buffer));
-            glDeleteProgram(program);
-            return 0;
-        }
-
-        return program;
-    }
-
-    /// F0/F1 smoke test: an otherwise empty state that clears the window, draws a
+    /// F1 smoke test: an otherwise empty state that clears the window, draws a
     /// single triangle and quits on Escape. Its purposes are to prove that a state
     /// drives the engine through the stack rather than through a loop written in
-    /// the game, and that the GL 3.3 core context obtained by the platform layer
-    /// can actually compile a shader and rasterise geometry.
+    /// the game, and that the render layer can be driven from a state.
     ///
-    /// TODO(F1): every GL call below moves into the render layer. A state will ask
-    /// for a clear colour and submit sprites instead of owning buffer names, and
-    /// the shader plumbing becomes render::Shader with std::expected error paths.
+    /// The shader is already render::Shader. The buffers below are not yet
+    /// anything — TODO(F1): render::Buffer and render::VertexArray replace them,
+    /// after which this state stops naming GL types at all.
     class DemoState final : public runtime::GameState
     {
     public:
@@ -177,10 +89,10 @@ void main()
             this->create_triangle();
         }
 
-        /// GL objects are released here rather than in the destructor because the
-        /// stack calls on_exit() while the context is still current: Application
-        /// declares the stack after the window, so the stack is destroyed first and
-        /// the context outlives every state.
+        /// GL resources are released here rather than in the destructor because
+        /// the stack calls on_exit() while the context is still current:
+        /// Application declares the stack after the window, so the stack is torn
+        /// down first and the context outlives every state.
         void on_exit() override
         {
             this->destroy_triangle();
@@ -215,32 +127,51 @@ void main()
             return false;
         }
 
+        void update(const double delta_time) override
+        {
+            this->elapsed_time += delta_time;
+        }
+
         void render() override
         {
             glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
-            if (this->shader_program == 0)
+            if (!this->shader.has_value())
             {
                 return;
             }
 
-            glUseProgram(this->shader_program);
+            this->shader->bind();
+
+            // Nothing needs a pulsing triangle; the uniform exists so that the
+            // path from a state through Shader to the driver is exercised every
+            // frame rather than only at startup.
+            const auto tint = static_cast<float>(0.75 + 0.25 * std::sin(this->elapsed_time * 2.0));
+            this->shader->set_uniform("tint", tint);
+
             glBindVertexArray(this->vertex_array);
             glDrawArrays(GL_TRIANGLES, 0, 3);
             glBindVertexArray(0);
-            glUseProgram(0);
+
+            render::Shader::unbind();
         }
 
     private:
         void create_triangle()
         {
-            this->shader_program = link_triangle_program();
-            if (this->shader_program == 0)
+            auto created = render::Shader::create("demo.triangle", TRIANGLE_VERTEX_SHADER,
+                                                  TRIANGLE_FRAGMENT_SHADER);
+            if (!created)
             {
-                log::error(log::Category::RENDER, "triangle program unavailable, drawing nothing");
+                // Reported, not fatal: the window stays up and the diagnostic
+                // stays readable, which is the whole point of routing this through
+                // std::expected instead of aborting.
+                log::error(log::Category::RENDER, "{}", created.error());
                 return;
             }
+
+            this->shader = std::move(*created);
 
             // The core profile has no default vertex array object, so one must be
             // bound before any attribute state can be recorded.
@@ -269,8 +200,8 @@ void main()
             glBindVertexArray(0);
             glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-            log::info(log::Category::RENDER, "triangle ready: program {}, array {}, buffer {}",
-                      this->shader_program, this->vertex_array, this->vertex_buffer);
+            log::info(log::Category::RENDER, "triangle ready: array {}, buffer {}",
+                      this->vertex_array, this->vertex_buffer);
         }
 
         void destroy_triangle()
@@ -279,16 +210,16 @@ void main()
             // case needs no separate handling.
             glDeleteBuffers(1, &this->vertex_buffer);
             glDeleteVertexArrays(1, &this->vertex_array);
-            glDeleteProgram(this->shader_program);
 
             this->vertex_buffer = 0;
             this->vertex_array = 0;
-            this->shader_program = 0;
+            this->shader.reset();
         }
 
-        GLuint shader_program = 0;
+        std::optional<render::Shader> shader;
         GLuint vertex_array = 0;
         GLuint vertex_buffer = 0;
+        double elapsed_time = 0.0;
     };
 }
 
