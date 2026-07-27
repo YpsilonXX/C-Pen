@@ -2,7 +2,10 @@
 #include <cpen/core/log.hh>
 #include <cpen/render/buffer.hh>
 #include <cpen/render/draw.hh>
+#include <cpen/render/image.hh>
+#include <cpen/render/pixel_format.hh>
 #include <cpen/render/shader.hh>
+#include <cpen/render/texture.hh>
 #include <cpen/render/vertex_array.hh>
 #include <cpen/runtime/game_state.hh>
 #include <cpen/runtime/state_stack.hh>
@@ -12,10 +15,12 @@
 #include <array>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string_view>
 #include <variant>
+#include <vector>
 
 using namespace cpen;
 
@@ -24,60 +29,126 @@ namespace
     /// Positions arrive already in clip space, so no transform is applied. The
     /// projection matrix and the virtual 1920x1080 reference resolution belong to
     /// the render layer, which does not have them yet.
-    ///
-    /// The per-vertex colour is interpolated by the rasteriser, which makes a
-    /// successful draw unmistakable: a uniform-coloured triangle could still come
-    /// from a shader that ignores its inputs.
-    constexpr const char* TRIANGLE_VERTEX_SHADER = R"(#version 330 core
+    constexpr const char* QUAD_VERTEX_SHADER = R"(#version 330 core
 layout (location = 0) in vec2 in_position;
-layout (location = 1) in vec3 in_color;
+layout (location = 1) in vec2 in_texture_coordinate;
 
-uniform float tint;
-
-out vec3 vertex_color;
+out vec2 texture_coordinate;
 
 void main()
 {
-    vertex_color = in_color * tint;
+    texture_coordinate = in_texture_coordinate;
     gl_Position = vec4(in_position, 0.0, 1.0);
 }
 )";
 
-    constexpr const char* TRIANGLE_FRAGMENT_SHADER = R"(#version 330 core
-in vec3 vertex_color;
+    /// The tint is applied to the sampled colour rather than replacing it, so that
+    /// a frame in which the texture failed to load is obviously black rather than
+    /// merely dim.
+    constexpr const char* QUAD_FRAGMENT_SHADER = R"(#version 330 core
+in vec2 texture_coordinate;
+
+uniform sampler2D source;
+uniform float tint;
 
 out vec4 fragment_color;
 
 void main()
 {
-    fragment_color = vec4(vertex_color, 1.0);
+    fragment_color = texture(source, texture_coordinate) * vec4(vec3(tint), 1.0);
 }
 )";
 
-    /// Interleaved vertex data: two position components followed by three colour
-    /// components, per vertex. Interleaving rather than one buffer per attribute
-    /// is what the sprite batch will use as well, so the layout is worth
-    /// rehearsing here.
-    constexpr std::array<float, 15> TRIANGLE_VERTICES = {
-        // position      colour
-        -0.6f, -0.5f,    1.0f, 0.0f, 0.0f,
-         0.6f, -0.5f,    0.0f, 1.0f, 0.0f,
-         0.0f,  0.6f,    0.0f, 0.0f, 1.0f,
+    /// The texture unit the quad's sampler reads from. Written into the `source`
+    /// uniform as a plain integer, which is what a sampler uniform holds: not the
+    /// texture's name, but the number of the unit it is bound to.
+    constexpr int QUAD_TEXTURE_UNIT = 0;
+
+    /// Interleaved vertex data: two position components followed by two texture
+    /// coordinates, per vertex.
+    ///
+    /// The texture coordinates put v = 0 on the *top* edge of the quad, which is
+    /// the engine's convention and the reason render::Image never flips a decoded
+    /// picture. GL numbers texture rows from the first one uploaded, and Image
+    /// hands over the file's first row — the top of the picture — first. Mapping
+    /// v = 0 to the top here is therefore what makes the image appear the right
+    /// way up, at the cost of nothing at all; flipping the pixels instead would
+    /// cost a copy of every asset at load time.
+    constexpr std::array<float, 16> QUAD_VERTICES = {
+        // position        texture coordinate
+        -0.6f,  0.6f,      0.0f, 0.0f,   // top left
+         0.6f,  0.6f,      1.0f, 0.0f,   // top right
+         0.6f, -0.6f,      1.0f, 1.0f,   // bottom right
+        -0.6f, -0.6f,      0.0f, 1.0f,   // bottom left
     };
 
-    constexpr std::size_t TRIANGLE_VERTEX_COUNT = 3;
+    /// Two triangles sharing the quad's leading diagonal. Indexed rather than six
+    /// separate vertices, so that the demo exercises the index-buffer path as
+    /// well — this is how every sprite the batch draws will be assembled.
+    constexpr std::array<std::uint32_t, 6> QUAD_INDICES = {0, 1, 2, 2, 3, 0};
+
+    constexpr std::size_t QUAD_INDEX_COUNT = QUAD_INDICES.size();
 
     constexpr glm::vec4 BACKGROUND_COLOR{0.1f, 0.1f, 0.15f, 1.0f};
 
-    /// F1 smoke test: an otherwise empty state that clears the window, draws a
-    /// single triangle and quits on Escape. Its purposes are to prove that a state
+    /// Side of the generated checkerboard, in texels.
+    constexpr std::uint32_t CHECKERBOARD_SIZE = 8;
+
+    /// Builds the demo's texture in memory rather than loading a file.
+    ///
+    /// The engine can decode a PNG — that is what render::Image::from_file is for —
+    /// but nothing yet tells a game where its assets live, and a demo that depends
+    /// on the working directory it was started from would fail for reasons that
+    /// have nothing to do with the render layer. Generating the pixels keeps the
+    /// repository free of binary fixtures until the asset layer of the next phase
+    /// gives a file path somewhere honest to come from.
+    ///
+    /// The pattern is deliberately not symmetric: one corner texel is a different
+    /// colour again, so that the picture on screen answers the orientation
+    /// question rather than merely looking plausible. That marker must appear at
+    /// the top left.
+    std::vector<std::byte> generate_checkerboard()
+    {
+        constexpr std::array<std::uint8_t, 4> LIGHT = {230, 220, 200, 255};
+        constexpr std::array<std::uint8_t, 4> DARK = {60, 70, 110, 255};
+        constexpr std::array<std::uint8_t, 4> MARKER = {220, 60, 60, 255};
+
+        std::vector<std::byte> pixels(
+            render::image_size_in_bytes(CHECKERBOARD_SIZE, CHECKERBOARD_SIZE,
+                                        render::PixelFormat::RGBA8));
+
+        std::size_t offset = 0;
+        for (std::uint32_t row = 0; row < CHECKERBOARD_SIZE; ++row)
+        {
+            for (std::uint32_t column = 0; column < CHECKERBOARD_SIZE; ++column)
+            {
+                // Row zero is the top row of the picture, so the marker written at
+                // (0, 0) is the top-left texel.
+                const bool is_marker = row == 0 && column == 0;
+                const bool is_light = ((row + column) % 2) == 0;
+
+                const std::array<std::uint8_t, 4>& color =
+                    is_marker ? MARKER : (is_light ? LIGHT : DARK);
+
+                for (const std::uint8_t channel : color)
+                {
+                    pixels[offset++] = static_cast<std::byte>(channel);
+                }
+            }
+        }
+
+        return pixels;
+    }
+
+    /// F1 smoke test: an otherwise empty state that clears the window, draws one
+    /// textured quad and quits on Escape. Its purposes are to prove that a state
     /// drives the engine through the stack rather than through a loop written in
     /// the game, and that the render layer can be driven from a state.
     ///
-    /// Nothing here names a GL type or includes a GL header any more: the shader,
-    /// the vertex data and the draw call all go through render/. What is still
-    /// missing is a projection — positions are raw normalised device coordinates,
-    /// so the triangle stretches with the window.
+    /// Nothing here names a GL type or includes a GL header: the shader, the
+    /// vertex and index data, the texture and the draw call all go through
+    /// render/. What is still missing is a projection — positions are raw
+    /// normalised device coordinates, so the quad stretches with the window.
     class DemoState final : public runtime::GameState
     {
     public:
@@ -86,7 +157,7 @@ void main()
         void on_enter() override
         {
             log::info(log::Category::APP, "demo state entered");
-            this->create_triangle();
+            this->create_quad();
         }
 
         /// GL resources are released here rather than in the destructor because
@@ -95,7 +166,7 @@ void main()
         /// down first and the context outlives every state.
         void on_exit() override
         {
-            this->destroy_triangle();
+            this->destroy_quad();
         }
 
         bool handle_event(const platform::Event& event) override
@@ -136,77 +207,114 @@ void main()
         {
             render::clear(BACKGROUND_COLOR);
 
-            if (!this->shader.has_value() || !this->triangle_array.has_value())
+            if (!this->shader.has_value() || !this->texture.has_value() ||
+                !this->quad_array.has_value())
             {
                 return;
             }
 
             this->shader->bind();
 
-            // Nothing needs a pulsing triangle; the uniform exists so that the
-            // path from a state through Shader to the driver is exercised every
-            // frame rather than only at startup.
+            // Nothing needs a pulsing quad; the uniform exists so that the path
+            // from a state through Shader to the driver is exercised every frame
+            // rather than only at startup.
             const auto tint = static_cast<float>(0.75 + 0.25 * std::sin(this->elapsed_time * 2.0));
             this->shader->set_uniform("tint", tint);
+            this->shader->set_uniform("source", QUAD_TEXTURE_UNIT);
 
-            render::draw_arrays(*this->triangle_array, render::Primitive::TRIANGLES,
-                                TRIANGLE_VERTEX_COUNT);
+            this->texture->bind(QUAD_TEXTURE_UNIT);
 
+            render::draw_elements(*this->quad_array, render::Primitive::TRIANGLES,
+                                  QUAD_INDEX_COUNT);
+
+            render::Texture::unbind(QUAD_TEXTURE_UNIT);
             render::Shader::unbind();
         }
 
     private:
-        void create_triangle()
+        void create_quad()
         {
-            auto created = render::Shader::create("demo.triangle", TRIANGLE_VERTEX_SHADER,
-                                                  TRIANGLE_FRAGMENT_SHADER);
-            if (!created)
+            auto created_shader = render::Shader::create("demo.quad", QUAD_VERTEX_SHADER,
+                                                         QUAD_FRAGMENT_SHADER);
+            if (!created_shader)
             {
                 // Reported, not fatal: the window stays up and the diagnostic
                 // stays readable, which is the whole point of routing this through
                 // std::expected instead of aborting.
-                log::error(log::Category::RENDER, "{}", created.error());
+                log::error(log::Category::RENDER, "{}", created_shader.error());
                 return;
             }
 
-            this->shader = std::move(*created);
+            this->shader = std::move(*created_shader);
 
-            this->triangle_vertices = render::Buffer::vertex(TRIANGLE_VERTICES);
+            // Nearest filtering, because the checkerboard is eight texels across
+            // and stretched over most of the window: linear filtering would blur
+            // every cell boundary into a gradient and hide exactly what the
+            // texture is here to show.
+            // Named rather than passed inline: a std::span built from a temporary
+            // vector stays valid only to the end of the full expression, which is
+            // true here but is not a rule worth relying on in passing.
+            const std::vector<std::byte> checkerboard = generate_checkerboard();
 
-            this->triangle_array.emplace();
-            this->triangle_array->attach(*this->triangle_vertices,
-                                         render::VertexLayout{
-                                             .attributes = {
-                                                 {.type = render::AttributeType::FLOAT,
-                                                  .component_count = 2},
-                                                 {.type = render::AttributeType::FLOAT,
-                                                  .component_count = 3},
-                                             },
-                                             .first_location = 0,
-                                         });
+            auto created_texture = render::Texture::from_pixels(
+                checkerboard, CHECKERBOARD_SIZE, CHECKERBOARD_SIZE,
+                render::PixelFormat::RGBA8,
+                render::TextureConfig{
+                    .minify_filter = render::TextureFilter::NEAREST,
+                    .magnify_filter = render::TextureFilter::NEAREST,
+                });
+            if (!created_texture)
+            {
+                log::error(log::Category::RENDER, "{}", created_texture.error());
+                return;
+            }
 
-            log::info(log::Category::RENDER, "triangle ready: array {}, buffer {}",
-                      this->triangle_array->id(), this->triangle_vertices->id());
+            this->texture = std::move(*created_texture);
+
+            this->quad_vertices = render::Buffer::vertex(QUAD_VERTICES);
+            this->quad_indices = render::Buffer::index(QUAD_INDICES);
+
+            this->quad_array.emplace();
+            this->quad_array->attach(*this->quad_vertices,
+                                     render::VertexLayout{
+                                         .attributes = {
+                                             {.type = render::AttributeType::FLOAT,
+                                              .component_count = 2},
+                                             {.type = render::AttributeType::FLOAT,
+                                              .component_count = 2},
+                                         },
+                                         .first_location = 0,
+                                     });
+            this->quad_array->set_index_buffer(*this->quad_indices);
+
+            log::info(log::Category::RENDER,
+                      "quad ready: array {}, vertices {}, indices {}, texture {}",
+                      this->quad_array->id(), this->quad_vertices->id(),
+                      this->quad_indices->id(), this->texture->id());
         }
 
-        void destroy_triangle()
+        void destroy_quad()
         {
             // Released in the reverse of the order they were created. The array
-            // reads from the buffer, so it goes first — the same reason the fields
-            // below are declared with the array last.
-            this->triangle_array.reset();
-            this->triangle_vertices.reset();
+            // reads from the buffers, so it goes first — the same reason the
+            // fields below are declared with the array last.
+            this->quad_array.reset();
+            this->quad_indices.reset();
+            this->quad_vertices.reset();
+            this->texture.reset();
             this->shader.reset();
         }
 
         std::optional<render::Shader> shader;
+        std::optional<render::Texture> texture;
 
         // Declaration order is the lifetime contract: members are destroyed in
-        // reverse, so the array that reads from the buffer is torn down before the
-        // buffer it reads from. VertexArray does not own its buffers, and this is
-        // what stands in for that ownership.
-        std::optional<render::Buffer> triangle_vertices;
-        std::optional<render::VertexArray> triangle_array;
+        // reverse, so the array that reads from the buffers is torn down before
+        // the buffers it reads from. VertexArray does not own its buffers, and
+        // this is what stands in for that ownership.
+        std::optional<render::Buffer> quad_vertices;
+        std::optional<render::Buffer> quad_indices;
+        std::optional<render::VertexArray> quad_array;
 
         double elapsed_time = 0.0;
     };
