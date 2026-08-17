@@ -2,6 +2,7 @@
 
 #include "cpen/core/log.hh"
 #include "cpen/render/draw.hh"
+#include "cpen/render/pixel_format.hh"
 #include "cpen/render/texture.hh"
 
 #include <algorithm>
@@ -44,17 +45,33 @@ void main()
 }
 )";
 
+        /// `alpha_only` is one for a single-channel texture and zero otherwise.
+        ///
+        /// A one-channel texture samples as (r, 0, 0, 1) in GLSL: a glyph atlas
+        /// holds coverage in red and no colour at all, so multiplying it by the
+        /// tint the way an RGBA texture is multiplied would draw red boxes. Read
+        /// as white at that coverage instead, the tint becomes the glyph's colour,
+        /// which is what makes text a sprite like any other.
+        ///
+        /// Written per flush rather than per sprite: a batch is already split by
+        /// texture, and how many channels a texture has is the texture's property
+        /// and not each sprite's. mix() rather than a branch, since both sides are
+        /// already computed.
         constexpr const char* SPRITE_FRAGMENT_SHADER = R"(#version 330 core
 in vec2 texture_coordinate;
 in vec4 tint;
 
 uniform sampler2D source;
+uniform float alpha_only;
 
 out vec4 fragment_color;
 
 void main()
 {
-    fragment_color = texture(source, texture_coordinate) * tint;
+    vec4 sampled = texture(source, texture_coordinate);
+    vec4 source_color = mix(sampled, vec4(1.0, 1.0, 1.0, sampled.r), alpha_only);
+
+    fragment_color = source_color * tint;
 }
 )";
 
@@ -261,6 +278,14 @@ void main()
         this->instances.update(this->pending);
 
         this->shader.bind();
+
+        // Set here rather than in begin(): it describes the texture this call
+        // samples from, and a batch may well flush several times with different
+        // textures between one begin() and its end().
+        this->shader.set_uniform(
+            "alpha_only",
+            this->current_texture->format() == PixelFormat::R8 ? 1.0f : 0.0f);
+
         this->current_texture->bind(SPRITE_TEXTURE_UNIT);
 
         draw_elements_instanced(this->array, Primitive::TRIANGLES, QUAD_INDEX_COUNT,
