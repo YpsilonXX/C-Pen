@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace cpen::render
 {
@@ -31,10 +32,43 @@ namespace cpen::render
         UNSIGNED_INT,
     };
 
+    /// How a fragment is combined with what is already in the framebuffer.
+    enum class BlendMode : std::uint8_t
+    {
+        /// The fragment replaces what is there, alpha included. GL's own default,
+        /// and what an opaque background wants.
+        NONE,
+
+        /// Straight, non-premultiplied alpha: the fragment's own alpha decides how
+        /// much of it shows.
+        ///
+        /// Straight rather than premultiplied because that is what a PNG contains
+        /// as authored. Premultiplied blends more correctly under filtering and
+        /// composes in more places, but it requires every asset to be converted on
+        /// the way in, and there is no asset pipeline to convert them in yet.
+        ALPHA,
+    };
+
+    constexpr std::string_view to_string(const BlendMode mode) noexcept
+    {
+        switch (mode)
+        {
+            case BlendMode::NONE:  return "none";
+            case BlendMode::ALPHA: return "alpha";
+        }
+        return "unknown";
+    }
+
     /// Sets the region of the framebuffer that normalised device coordinates map
     /// onto. Must be called whenever the framebuffer is resized, or the image keeps
     /// being stretched into the old rectangle.
     void set_viewport(int x, int y, int width, int height);
+
+    /// Selects how fragments are blended into the framebuffer.
+    ///
+    /// Global state, like the viewport and unlike anything a Shader or a Buffer
+    /// owns, so it lives here beside them and moves into Renderer with them.
+    void set_blend(BlendMode mode);
 
     /// Applies the rectangle a Viewport computed. The overload exists so that the
     /// four components are never unpacked and reordered by hand at a call site:

@@ -6,6 +6,7 @@
 #include "cpen/render/vertex_array.hh"
 #include "support/gl_fixture.hh"
 #include "support/log_capture.hh"
+#include "support/render_target.hh"
 #include "support/trace.hh"
 
 #include <glad/glad.h>
@@ -24,11 +25,12 @@ using cpen::render::VertexArray;
 using cpen::render::VertexLayout;
 using cpen::test::gl_context;
 using cpen::test::LogCaptureGuard;
+using cpen::test::RenderTarget;
 using cpen::test::trace;
 
 namespace
 {
-    constexpr int TARGET_SIZE = 64;
+    constexpr int TARGET_SIZE = RenderTarget::SIZE;
 
     constexpr glm::vec4 BLACK{0.0f, 0.0f, 0.0f, 1.0f};
 
@@ -49,74 +51,6 @@ void main()
     fragment_color = vec4(1.0, 0.0, 0.0, 1.0);
 }
 )";
-
-    /// A colour renderbuffer and the framebuffer it is attached to, so that a draw
-    /// can be checked by reading the pixels back.
-    ///
-    /// Deliberately raw GL rather than a render:: type: there is no
-    /// render::Framebuffer yet, and inventing one here would mean testing two
-    /// things at once. Drawing into the default framebuffer instead would need no
-    /// code at all, but its contents are only defined for a window that is actually
-    /// on screen, and the fixture's window is hidden.
-    class RenderTarget
-    {
-    public:
-        RenderTarget()
-        {
-            glGetIntegerv(GL_VIEWPORT, this->previous_viewport.data());
-
-            glGenRenderbuffers(1, &this->color_buffer);
-            glBindRenderbuffer(GL_RENDERBUFFER, this->color_buffer);
-            glRenderbufferStorage(GL_RENDERBUFFER, GL_RGBA8, TARGET_SIZE, TARGET_SIZE);
-
-            glGenFramebuffers(1, &this->framebuffer);
-            glBindFramebuffer(GL_FRAMEBUFFER, this->framebuffer);
-            glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                      GL_RENDERBUFFER, this->color_buffer);
-
-            cpen::render::set_viewport(0, 0, TARGET_SIZE, TARGET_SIZE);
-        }
-
-        ~RenderTarget()
-        {
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
-            glDeleteFramebuffers(1, &this->framebuffer);
-            glDeleteRenderbuffers(1, &this->color_buffer);
-
-            // Restored rather than left at the target's size: the fixture's context
-            // is shared by every case in the process, and global state left behind
-            // here would surface as an unrelated failure later.
-            glViewport(this->previous_viewport[0], this->previous_viewport[1],
-                       this->previous_viewport[2], this->previous_viewport[3]);
-        }
-
-        RenderTarget(const RenderTarget&) = delete;
-        RenderTarget& operator=(const RenderTarget&) = delete;
-
-        bool is_complete() const
-        {
-            return glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE;
-        }
-
-        std::array<std::uint8_t, 4> pixel_at(const int x, const int y) const
-        {
-            std::array<std::uint8_t, 4> color{};
-            glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, color.data());
-            return color;
-        }
-
-        /// The pixel in the middle of the target, which every case here arranges to
-        /// be covered by geometry when the draw worked.
-        std::array<std::uint8_t, 4> centre_pixel() const
-        {
-            return this->pixel_at(TARGET_SIZE / 2, TARGET_SIZE / 2);
-        }
-
-    private:
-        GLuint framebuffer = 0;
-        GLuint color_buffer = 0;
-        std::array<GLint, 4> previous_viewport{};
-    };
 
     /// Adds a per-instance offset to the vertex position, so that where an instance
     /// lands is decided entirely by the attribute carrying the divisor.

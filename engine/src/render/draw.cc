@@ -46,6 +46,28 @@ namespace cpen::render
         set_viewport(rect.x, rect.y, rect.width, rect.height);
     }
 
+    void set_blend(const BlendMode mode)
+    {
+        if (mode == BlendMode::NONE)
+        {
+            glDisable(GL_BLEND);
+            return;
+        }
+
+        glEnable(GL_BLEND);
+
+        // The alpha channel is blended separately, and not with the same factors.
+        // Taken through GL_SRC_ALPHA like the colour channels, the destination's
+        // alpha would come out as the product of the two rather than their union,
+        // and a stack of half-transparent sprites drawn into an offscreen target
+        // would end up more transparent the more of them there were. GL_ONE against
+        // GL_ONE_MINUS_SRC_ALPHA accumulates coverage instead. It makes no
+        // difference to the default framebuffer, whose alpha nothing reads, and all
+        // the difference to a render target that is composited later.
+        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+                            GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
     void clear(const glm::vec4& color)
     {
         glClearColor(color.r, color.g, color.b, color.a);
