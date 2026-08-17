@@ -2,6 +2,7 @@
 
 #include "cpen/core/blackboard.hh"
 #include "cpen/core/event_bus.hh"
+#include "cpen/render/viewport.hh"
 #include "cpen/runtime/game_context.hh"
 #include "cpen/runtime/game_state.hh"
 #include "cpen/runtime/state_stack.hh"
@@ -18,6 +19,7 @@ using cpen::core::Blackboard;
 using cpen::core::EventBus;
 using cpen::platform::CloseEvent;
 using cpen::platform::Event;
+using cpen::render::Viewport;
 using cpen::runtime::GameContext;
 using cpen::runtime::GameState;
 using cpen::runtime::StateStack;
@@ -84,7 +86,18 @@ namespace
 
         EventBus event_bus;
         Blackboard blackboard{event_bus};
-        GameContext context{.blackboard = blackboard, .event_bus = event_bus};
+
+        /// Never resized, and never looked at by these states: the stack's own
+        /// behaviour has nothing to do with the window. It is here because a
+        /// GameContext holds one, and it can be here — with no framebuffer and no
+        /// GL context — because Viewport is arithmetic and nothing else.
+        Viewport viewport;
+
+        GameContext context{
+            .blackboard = blackboard,
+            .event_bus = event_bus,
+            .viewport = viewport,
+        };
         StateStack stack{context};
 
         std::unique_ptr<RecordingState> state(std::string state_name)
@@ -414,7 +427,12 @@ TEST_CASE("the stack exits its states when destroyed", "[runtime][state_stack]")
     std::vector<std::string> journal;
     EventBus event_bus;
     Blackboard blackboard(event_bus);
-    GameContext context{.blackboard = blackboard, .event_bus = event_bus};
+    Viewport viewport;
+    GameContext context{
+        .blackboard = blackboard,
+        .event_bus = event_bus,
+        .viewport = viewport,
+    };
 
     {
         StateStack stack(context);

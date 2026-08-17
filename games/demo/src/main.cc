@@ -7,6 +7,8 @@
 #include <cpen/render/shader.hh>
 #include <cpen/render/texture.hh>
 #include <cpen/render/vertex_array.hh>
+#include <cpen/render/viewport.hh>
+#include <cpen/runtime/game_context.hh>
 #include <cpen/runtime/game_state.hh>
 #include <cpen/runtime/state_stack.hh>
 
@@ -26,19 +28,23 @@ using namespace cpen;
 
 namespace
 {
-    /// Positions arrive already in clip space, so no transform is applied. The
-    /// projection matrix and the virtual 1920x1080 reference resolution belong to
-    /// the render layer, which does not have them yet.
+    /// Positions arrive in virtual pixels — the 1920x1080 space the game is
+    /// authored in — and the projection supplied by the engine's viewport carries
+    /// them into clip space. The uniform is written once at creation rather than
+    /// per frame: letterboxing changes which part of the window is drawn into, and
+    /// never the coordinate system drawn in.
     constexpr const char* QUAD_VERTEX_SHADER = R"(#version 330 core
 layout (location = 0) in vec2 in_position;
 layout (location = 1) in vec2 in_texture_coordinate;
+
+uniform mat4 projection;
 
 out vec2 texture_coordinate;
 
 void main()
 {
     texture_coordinate = in_texture_coordinate;
-    gl_Position = vec4(in_position, 0.0, 1.0);
+    gl_Position = projection * vec4(in_position, 0.0, 1.0);
 }
 )";
 
@@ -67,19 +73,27 @@ void main()
     /// Interleaved vertex data: two position components followed by two texture
     /// coordinates, per vertex.
     ///
+    /// Positions are in virtual pixels, with the origin at the top left and y
+    /// growing downwards — a 640x640 square centred in the 1920x1080 design space.
+    /// Written out rather than computed from the viewport, because the point of a
+    /// fixed virtual resolution is that a position is a constant of the scene and
+    /// not a function of the window.
+    ///
     /// The texture coordinates put v = 0 on the *top* edge of the quad, which is
     /// the engine's convention and the reason render::Image never flips a decoded
     /// picture. GL numbers texture rows from the first one uploaded, and Image
     /// hands over the file's first row — the top of the picture — first. Mapping
     /// v = 0 to the top here is therefore what makes the image appear the right
     /// way up, at the cost of nothing at all; flipping the pixels instead would
-    /// cost a copy of every asset at load time.
+    /// cost a copy of every asset at load time. Note that the same reasoning now
+    /// applies to the positions: both axes agree, so the marker texel written at
+    /// texture row zero belongs at the vertex with the smallest y.
     constexpr std::array<float, 16> QUAD_VERTICES = {
-        // position        texture coordinate
-        -0.6f,  0.6f,      0.0f, 0.0f,   // top left
-         0.6f,  0.6f,      1.0f, 0.0f,   // top right
-         0.6f, -0.6f,      1.0f, 1.0f,   // bottom right
-        -0.6f, -0.6f,      0.0f, 1.0f,   // bottom left
+        // position          texture coordinate
+         640.0f,  220.0f,    0.0f, 0.0f,   // top left
+        1280.0f,  220.0f,    1.0f, 0.0f,   // top right
+        1280.0f,  860.0f,    1.0f, 1.0f,   // bottom right
+         640.0f,  860.0f,    0.0f, 1.0f,   // bottom left
     };
 
     /// Two triangles sharing the quad's leading diagonal. Indexed rather than six
@@ -147,8 +161,9 @@ void main()
     ///
     /// Nothing here names a GL type or includes a GL header: the shader, the
     /// vertex and index data, the texture and the draw call all go through
-    /// render/. What is still missing is a projection — positions are raw
-    /// normalised device coordinates, so the quad stretches with the window.
+    /// render/. Nor does it manage the window: positions are in virtual pixels and
+    /// the engine's viewport letterboxes them, so resizing the window neither
+    /// distorts the quad nor requires the state to do anything.
     class DemoState final : public runtime::GameState
     {
     public:
@@ -187,12 +202,18 @@ void main()
             }
             else if (const auto* resize = std::get_if<platform::ResizeEvent>(&event))
             {
-                render::set_viewport(0, 0,
-                                     static_cast<int>(resize->width),
-                                     static_cast<int>(resize->height));
-                log::debug(log::Category::APP, "framebuffer resized to {}x{}",
-                           resize->width, resize->height);
-                return true;
+                // Nothing is done about it here any more: the Application refits
+                // the viewport before the event reaches the stack, and the quad's
+                // coordinates are virtual, so the scene needs no adjusting at all.
+                // Logged only to make that visible while running the demo.
+                log::debug(log::Category::APP,
+                           "framebuffer resized to {}x{}, content now {}x{} at ({}, {})",
+                           resize->width, resize->height,
+                           this->context().viewport.rect().width,
+                           this->context().viewport.rect().height,
+                           this->context().viewport.rect().x,
+                           this->context().viewport.rect().y);
+                return false;
             }
 
             return false;
@@ -246,6 +267,14 @@ void main()
             }
 
             this->shader = std::move(*created_shader);
+
+            // Written once, not per frame. The projection is a property of the
+            // virtual resolution, which never changes, and a uniform's value lives
+            // in the program object rather than in the context — so this survives
+            // every later bind.
+            this->shader->bind();
+            this->shader->set_uniform("projection", this->context().viewport.projection());
+            render::Shader::unbind();
 
             // Nearest filtering, because the checkerboard is eight texels across
             // and stretched over most of the window: linear filtering would blur

@@ -7,6 +7,11 @@ namespace cpen::core
     class EventBus;
 }
 
+namespace cpen::render
+{
+    class Viewport;
+}
+
 namespace cpen::runtime
 {
     /// The engine services every game state is given.
@@ -25,8 +30,15 @@ namespace cpen::runtime
         core::Blackboard& blackboard;
         core::EventBus& event_bus;
 
+        /// The mapping from the virtual resolution the game is authored in to the
+        /// window it is displayed in. Const: the Application drives it from the
+        /// framebuffer size, and a state that could resize it would be changing
+        /// the coordinate system the states below it are drawing in.
+        const render::Viewport& viewport;
+
         // Extended as the layers below appear: asset manager (F1), renderer and
-        // presentation (F1-F3), audio (F5).
+        // presentation (F1-F3), audio (F5). The viewport moves inside the renderer
+        // when that arrives, and is exposed here directly only until it does.
     };
 }
 
