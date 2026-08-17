@@ -134,9 +134,9 @@ namespace cpen::render
         }
     }
 
-    Texture::Texture(const unsigned int handle, const std::uint32_t width,
+    Texture::Texture(const unsigned int texture, const std::uint32_t width,
                      const std::uint32_t height, const PixelFormat format) noexcept
-        : handle(handle),
+        : handle(texture),
           pixel_width(width),
           pixel_height(height),
           pixel_format(format)

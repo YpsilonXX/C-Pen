@@ -163,7 +163,7 @@ namespace cpen::render
     private:
         /// The one real constructor. A null `pixels` allocates the store without
         /// filling it, which is glTexImage2D's own convention.
-        Texture(unsigned int handle, std::uint32_t width, std::uint32_t height,
+        Texture(unsigned int texture, std::uint32_t width, std::uint32_t height,
                 PixelFormat format) noexcept;
 
         /// Validates the dimensions and the buffer size shared by all three
