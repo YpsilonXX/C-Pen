@@ -1,8 +1,14 @@
 name: CI
 
+# Every branch, not only the default one. Work here happens on a branch per phase
+# and is merged when the phase is finished, so a rule that only watched master
+# would report on each phase exactly once, after there was anything left to do
+# about it.
+#
+# Note that a push event runs the workflow file as it exists *on that branch*: a
+# branch created before this file will not be tested until it picks the file up.
 on:
   push:
-    branches: [master]
   pull_request:
   workflow_dispatch:
 
@@ -11,8 +17,12 @@ permissions:
 
 # A second push to the same branch supersedes the first: there is nothing to learn
 # from a run of a commit that is no longer the head of anything.
+#
+# head_ref before ref so that a branch's own runs and the runs of a pull request
+# opened from it share one group. Without that they are two groups and every push
+# to a branch with an open pull request costs two full runs of everything.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
