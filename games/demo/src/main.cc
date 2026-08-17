@@ -91,7 +91,12 @@ namespace
     constexpr std::string_view DEMO_PARAGRAPH =
         "Текст рисуется теми же спрайтами, что и картинки: глиф — это область "
         "атласа, а строка — один вызов отрисовки.\n"
-        "Перенос считает кодовые точки, а не байты.";
+        "Слева вверху текстура растянута в полсотни раз без фильтрации, отчего "
+        "видна и лесенка на границах клеток, и ступенчатый край квада. В центре — "
+        "то же самое так, как устроен настоящий спрайт.";
+
+    constexpr std::string_view CRISP_LABEL = "8x8, nearest, край непрозрачный";
+    constexpr std::string_view SMOOTH_LABEL = "128x128, linear, кайма прозрачная";
 
     /// Finds a typeface installed on the machine.
     ///
@@ -122,6 +127,62 @@ namespace
         }
 
         return std::nullopt;
+    }
+
+    /// Side of the smooth checkerboard, in texels, and the size of one of its
+    /// cells. Large enough that one texel covers about three screen pixels at the
+    /// size it is drawn, which is the range where linear filtering smooths an edge
+    /// without softening the pattern.
+    constexpr std::uint32_t SOFT_CHECKERBOARD_SIZE = 128;
+    constexpr std::uint32_t SOFT_CHECKERBOARD_CELL = 16;
+
+    /// The same pattern as the small checkerboard, drawn the way a real asset is.
+    ///
+    /// Two differences, and both matter for the edges. It is large enough to be
+    /// magnified only a little, so linear filtering blends across a few pixels
+    /// rather than across a whole cell. And its outermost ring of texels is
+    /// transparent, so the sprite's silhouette is decided by the alpha channel
+    /// instead of by the edge of the quad — which is what a cut-out character is,
+    /// and why no amount of multisampling would be needed to draw one smoothly.
+    ///
+    /// The transparent ring keeps the colour of the texel beside it and changes
+    /// only its alpha. Blending is straight rather than premultiplied, so linear
+    /// filtering interpolates the colour channels as well: a ring left black would
+    /// darken the colour on the way out as the alpha fell, and the sprite would
+    /// come out with a dark halo all round it. Carrying the neighbour's colour
+    /// makes the ramp touch nothing but the alpha.
+    std::vector<std::byte> generate_soft_checkerboard()
+    {
+        constexpr std::array<std::uint8_t, 3> LIGHT = {230, 220, 200};
+        constexpr std::array<std::uint8_t, 3> DARK = {60, 70, 110};
+
+        std::vector<std::byte> pixels(
+            render::image_size_in_bytes(SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE,
+                                        render::PixelFormat::RGBA8));
+
+        std::size_t offset = 0;
+        for (std::uint32_t row = 0; row < SOFT_CHECKERBOARD_SIZE; ++row)
+        {
+            for (std::uint32_t column = 0; column < SOFT_CHECKERBOARD_SIZE; ++column)
+            {
+                const bool is_light =
+                    ((row / SOFT_CHECKERBOARD_CELL) + (column / SOFT_CHECKERBOARD_CELL)) % 2 == 0;
+
+                const bool is_border = row == 0 || column == 0 ||
+                                       row == SOFT_CHECKERBOARD_SIZE - 1 ||
+                                       column == SOFT_CHECKERBOARD_SIZE - 1;
+
+                const std::array<std::uint8_t, 3>& color = is_light ? LIGHT : DARK;
+
+                for (const std::uint8_t channel : color)
+                {
+                    pixels[offset++] = static_cast<std::byte>(channel);
+                }
+                pixels[offset++] = static_cast<std::byte>(is_border ? 0 : 255);
+            }
+        }
+
+        return pixels;
     }
 
     /// F1 smoke test: an otherwise empty state that clears the window, draws a few
@@ -155,6 +216,7 @@ namespace
             this->batch.reset();
             this->body_font.reset();
             this->title_font.reset();
+            this->soft_texture.reset();
             this->texture.reset();
         }
 
@@ -211,25 +273,36 @@ namespace
 
             this->batch->begin(this->context().viewport.projection());
 
+            // Turning about its own middle. Rotation is what the affine transform
+            // was chosen for, and a sprite that stays put while it turns is what
+            // proves the origin is carried through the same axes as the corners.
+            //
+            // Drawn first, and from the other texture, so that the two textures
+            // make two runs rather than three: the batch never reorders what it is
+            // given, so grouping is the caller's to arrange.
+            if (this->soft_texture.has_value())
+            {
+                this->batch->draw(*this->soft_texture, render::Sprite{
+                                                           .position = {960.0f, 540.0f},
+                                                           .size = {420.0f, 420.0f},
+                                                           .origin = {0.5f, 0.5f},
+                                                           .rotation = seconds * 0.6f,
+                                                       });
+            }
+
             // Anchored at the top-left corner of virtual space, at its natural
             // orientation. The red marker texel belongs in *its* top-left corner,
             // which is the whole scene's answer to which way up everything is.
+            //
+            // Eight texels stretched across two hundred and forty pixels with no
+            // filtering: the comparison against the one above, and the reason both
+            // kinds of jagged edge are visible here and neither is there.
             this->batch->draw(*this->texture, render::Sprite{
                                                   .position = {80.0f, 80.0f},
                                                   .size = {240.0f, 240.0f},
                                               });
 
-            // Turning about its own middle. Rotation is what the affine transform
-            // was chosen for, and a sprite that stays put while it turns is what
-            // proves the origin is carried through the same axes as the corners.
-            this->batch->draw(*this->texture, render::Sprite{
-                                                  .position = {960.0f, 540.0f},
-                                                  .size = {420.0f, 420.0f},
-                                                  .origin = {0.5f, 0.5f},
-                                                  .rotation = seconds * 0.6f,
-                                              });
-
-            // Overlapping the one above with a pulsing alpha, so the blend mode the
+            // Overlapping the rotating sprite with a pulsing alpha, so the blend mode the
             // batch enables is visible rather than merely configured.
             const float pulse = 0.35f + 0.25f * std::sin(seconds * 2.0f);
             this->batch->draw(*this->texture, render::Sprite{
@@ -294,6 +367,28 @@ namespace
                 render::draw_text(*this->batch, *this->body_font, line, pen, BODY_COLOR);
                 pen.y += this->body_font->line_height();
             }
+
+            // Both labels come after the paragraph and in the same font, so all the
+            // body text is one run whatever order the sprites above were drawn in.
+            constexpr glm::vec4 LABEL_COLOR{0.65f, 0.70f, 0.80f, 1.0f};
+
+            this->draw_centred(*this->body_font, CRISP_LABEL, glm::vec2{200.0f, 360.0f},
+                               LABEL_COLOR);
+
+            if (this->soft_texture.has_value())
+            {
+                this->draw_centred(*this->body_font, SMOOTH_LABEL, glm::vec2{960.0f, 800.0f},
+                                   LABEL_COLOR);
+            }
+        }
+
+        /// Draws one line with its box centred on `centre`, which is what
+        /// measure_text is for.
+        void draw_centred(render::Font& font, const std::string_view text,
+                          const glm::vec2& centre, const glm::vec4& color)
+        {
+            const glm::vec2 box = render::measure_text(font, text);
+            render::draw_text(*this->batch, font, text, centre - box * 0.5f, color);
         }
 
         void create_scene()
@@ -324,6 +419,23 @@ namespace
             }
 
             this->texture = std::move(*created_texture);
+
+            // Linear filtering this time, and no override of the default: a texture
+            // large enough not to be magnified far is what LINEAR is the right
+            // answer for, and TextureConfig already says so by defaulting to it.
+            const std::vector<std::byte> smooth = generate_soft_checkerboard();
+
+            auto created_soft = render::Texture::from_pixels(
+                smooth, SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE,
+                render::PixelFormat::RGBA8);
+            if (!created_soft)
+            {
+                log::error(log::Category::RENDER, "{}", created_soft.error());
+            }
+            else
+            {
+                this->soft_texture = std::move(*created_soft);
+            }
 
             auto created_batch = render::SpriteBatch::create();
             if (!created_batch)
@@ -365,6 +477,10 @@ namespace
         }
 
         std::optional<render::Texture> texture;
+
+        /// The same pattern drawn the way an asset is: large enough to filter, with
+        /// a transparent ring so the silhouette comes from the alpha channel.
+        std::optional<render::Texture> soft_texture;
 
         // Two sizes of one typeface, which the engine treats exactly as two
         // different typefaces would be treated: each owns its atlas, and drawing
