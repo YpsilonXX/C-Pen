@@ -9,7 +9,7 @@ namespace cpen::core
 
 namespace cpen::render
 {
-    class Viewport;
+    class Renderer;
 }
 
 namespace cpen::runtime
@@ -30,15 +30,18 @@ namespace cpen::runtime
         core::Blackboard& blackboard;
         core::EventBus& event_bus;
 
-        /// The mapping from the virtual resolution the game is authored in to the
-        /// window it is displayed in. Const: the Application drives it from the
-        /// framebuffer size, and a state that could resize it would be changing
-        /// the coordinate system the states below it are drawing in.
-        const render::Viewport& viewport;
+        /// Everything a state needs in order to draw, and the only route it has to
+        /// the render layer. Carries the viewport, so the coordinate system is
+        /// reachable as renderer.viewport() by anything that wants to convert a
+        /// coordinate without drawing anything.
+        ///
+        /// Non-const, because drawing genuinely changes what the renderer holds.
+        /// The frame around it is not the state's to open: the Application does
+        /// that once, either side of the whole render pass.
+        render::Renderer& renderer;
 
-        // Extended as the layers below appear: asset manager (F1), renderer and
-        // presentation (F1-F3), audio (F5). The viewport moves inside the renderer
-        // when that arrives, and is exposed here directly only until it does.
+        // Extended as the layers below appear: asset manager (F1), presentation
+        // (F2-F3), audio (F5).
     };
 }
 

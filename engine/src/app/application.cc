@@ -1,7 +1,6 @@
 #include "cpen/app/application.hh"
 
 #include "cpen/core/log.hh"
-#include "cpen/render/draw.hh"
 
 #include <algorithm>
 #include <utility>
@@ -17,30 +16,50 @@ namespace cpen::app
     Application::Application(Config settings)
         : configuration(std::move(settings)),
           main_window(this->platform_context, this->configuration.window),
-          main_viewport(this->configuration.virtual_width, this->configuration.virtual_height,
-                        this->configuration.scale_mode),
+          main_renderer(make_renderer(this->configuration)),
           blackboard(this->event_bus),
           game_context(runtime::GameContext{
               .blackboard = this->blackboard,
               .event_bus = this->event_bus,
-              .viewport = this->main_viewport,
+              .renderer = this->main_renderer,
           }),
           stack(this->game_context)
     {
         this->refit_viewport();
 
+        const render::Viewport& viewport = this->main_renderer.viewport();
+
         log::info(log::Category::APP,
-                  "application initialised, window {}x{}, virtual {}x{} ({})",
+                  "application initialised, window {}x{}, virtual {}x{} ({}), drawing {}",
                   this->configuration.window.width, this->configuration.window.height,
-                  this->main_viewport.virtual_size().x, this->main_viewport.virtual_size().y,
-                  render::to_string(this->main_viewport.scale_mode()));
+                  viewport.virtual_size().x, viewport.virtual_size().y,
+                  render::to_string(viewport.scale_mode()),
+                  this->main_renderer.can_draw() ? "enabled" : "unavailable");
+    }
+
+    render::Renderer Application::make_renderer(const Config& settings)
+    {
+        auto created = render::Renderer::create(settings.virtual_width, settings.virtual_height,
+                                                settings.scale_mode, settings.sprite_capacity);
+        if (created)
+        {
+            return std::move(*created);
+        }
+
+        log::error(log::Category::RENDER, "{}", created.error());
+        log::error(log::Category::RENDER,
+                   "the application continues without the means to draw; the window will "
+                   "stay up so that this message can be read");
+
+        return render::Renderer{render::Viewport{settings.virtual_width,
+                                                 settings.virtual_height,
+                                                 settings.scale_mode}};
     }
 
     void Application::refit_viewport()
     {
         const platform::Size framebuffer = this->main_window.framebuffer_size();
-        this->main_viewport.resize(framebuffer.width, framebuffer.height);
-        render::set_viewport(this->main_viewport.rect());
+        this->main_renderer.resize(framebuffer.width, framebuffer.height);
     }
 
     void Application::route_events()
@@ -97,7 +116,14 @@ namespace cpen::app
             this->event_bus.dispatch_pending();
             this->stack.apply_pending();
 
+            // The frame is opened here and nowhere else. Every state the stack
+            // renders, from the deepest visible one upwards, submits into the same
+            // batch — so an overlay merges its runs with what it covers instead of
+            // starting its own, and no state can leave a frame open.
+            this->main_renderer.begin_frame();
             this->stack.render();
+            this->main_renderer.end_frame();
+
             this->main_window.swap_buffers();
         }
 

@@ -1,14 +1,12 @@
 #include <cpen/app/application.hh>
 #include <cpen/core/log.hh>
-#include <cpen/render/draw.hh>
 #include <cpen/render/font.hh>
-#include <cpen/render/image.hh>
 #include <cpen/render/pixel_format.hh>
+#include <cpen/render/renderer.hh>
 #include <cpen/render/sprite.hh>
 #include <cpen/render/sprite_batch.hh>
 #include <cpen/render/text.hh>
 #include <cpen/render/texture.hh>
-#include <cpen/render/viewport.hh>
 #include <cpen/runtime/game_context.hh>
 #include <cpen/runtime/game_state.hh>
 
@@ -204,6 +202,11 @@ namespace
         void on_enter() override
         {
             log::info(log::Category::APP, "demo state entered");
+
+            // The background belongs to the frame rather than to this state, so it
+            // is set once here instead of being cleared to on every render().
+            this->context().renderer.set_clear_color(BACKGROUND_COLOR);
+
             this->create_scene();
         }
 
@@ -213,7 +216,6 @@ namespace
         /// down first and the context outlives every state.
         void on_exit() override
         {
-            this->batch.reset();
             this->body_font.reset();
             this->title_font.reset();
             this->soft_texture.reset();
@@ -245,10 +247,10 @@ namespace
                 log::debug(log::Category::APP,
                            "framebuffer resized to {}x{}, content now {}x{} at ({}, {})",
                            resize->width, resize->height,
-                           this->context().viewport.rect().width,
-                           this->context().viewport.rect().height,
-                           this->context().viewport.rect().x,
-                           this->context().viewport.rect().y);
+                           this->context().renderer.viewport().rect().width,
+                           this->context().renderer.viewport().rect().height,
+                           this->context().renderer.viewport().rect().x,
+                           this->context().renderer.viewport().rect().y);
                 return false;
             }
 
@@ -262,16 +264,18 @@ namespace
 
         void render() override
         {
-            render::clear(BACKGROUND_COLOR);
+            // Neither the clear nor the batch is this state's to open: the
+            // Application does both, once, either side of the whole render pass.
+            // What arrives here is a batch already open on the frame's projection,
+            // shared with every other state in the stack.
+            render::SpriteBatch* const batch = this->context().renderer.sprites();
 
-            if (!this->batch.has_value() || !this->texture.has_value())
+            if (batch == nullptr || !this->texture.has_value())
             {
                 return;
             }
 
             const auto seconds = static_cast<float>(this->elapsed_time);
-
-            this->batch->begin(this->context().viewport.projection());
 
             // Turning about its own middle. Rotation is what the affine transform
             // was chosen for, and a sprite that stays put while it turns is what
@@ -282,7 +286,7 @@ namespace
             // given, so grouping is the caller's to arrange.
             if (this->soft_texture.has_value())
             {
-                this->batch->draw(*this->soft_texture, render::Sprite{
+                batch->draw(*this->soft_texture, render::Sprite{
                                                            .position = {960.0f, 540.0f},
                                                            .size = {420.0f, 420.0f},
                                                            .origin = {0.5f, 0.5f},
@@ -297,7 +301,7 @@ namespace
             // Eight texels stretched across two hundred and forty pixels with no
             // filtering: the comparison against the one above, and the reason both
             // kinds of jagged edge are visible here and neither is there.
-            this->batch->draw(*this->texture, render::Sprite{
+            batch->draw(*this->texture, render::Sprite{
                                                   .position = {80.0f, 80.0f},
                                                   .size = {240.0f, 240.0f},
                                               });
@@ -305,7 +309,7 @@ namespace
             // Overlapping the rotating sprite with a pulsing alpha, so the blend mode the
             // batch enables is visible rather than merely configured.
             const float pulse = 0.35f + 0.25f * std::sin(seconds * 2.0f);
-            this->batch->draw(*this->texture, render::Sprite{
+            batch->draw(*this->texture, render::Sprite{
                                                   .position = {1120.0f, 700.0f},
                                                   .size = {360.0f, 300.0f},
                                                   .origin = {0.5f, 0.5f},
@@ -314,7 +318,7 @@ namespace
 
             // One texel of the texture, blown up. The region is in texels, so the
             // marker is asked for by the coordinates it was written at.
-            this->batch->draw(*this->texture,
+            batch->draw(*this->texture,
                               render::Sprite{
                                   .position = {1700.0f, 160.0f},
                                   .size = {160.0f, 160.0f},
@@ -322,16 +326,13 @@ namespace
                                   .region = {.position = {0.0f, 0.0f}, .size = {1.0f, 1.0f}},
                               });
 
-            this->draw_text_block();
-
-            this->batch->end();
+            this->draw_text_block(*batch);
 
             if (!this->reported_batch)
             {
                 this->reported_batch = true;
-                log::info(log::Category::RENDER,
-                          "first frame: {} sprite(s) in {} draw call(s)",
-                          this->batch->sprite_count(), this->batch->draw_calls());
+                log::info(log::Category::RENDER, "first frame: {} sprite(s) submitted",
+                          batch->sprite_count());
             }
         }
 
@@ -341,7 +342,7 @@ namespace
         /// Submitted into the same open batch as the sprites above, which is the
         /// claim worth seeing on screen: text is not a second renderer with a
         /// second shader, it is sprites against a different texture.
-        void draw_text_block()
+        void draw_text_block(render::SpriteBatch& batch)
         {
             if (!this->title_font.has_value() || !this->body_font.has_value())
             {
@@ -352,7 +353,7 @@ namespace
             constexpr glm::vec4 TITLE_COLOR{0.95f, 0.85f, 0.55f, 1.0f};
             constexpr glm::vec4 BODY_COLOR{0.85f, 0.88f, 0.95f, 1.0f};
 
-            render::draw_text(*this->batch, *this->title_font, DEMO_TITLE, TEXT_ORIGIN,
+            render::draw_text(batch, *this->title_font, DEMO_TITLE, TEXT_ORIGIN,
                               TITLE_COLOR);
 
             // Measured rather than guessed, so the paragraph sits under the title
@@ -364,7 +365,7 @@ namespace
             for (const std::string_view line :
                  render::wrap_text(*this->body_font, DEMO_PARAGRAPH, PARAGRAPH_WIDTH))
             {
-                render::draw_text(*this->batch, *this->body_font, line, pen, BODY_COLOR);
+                render::draw_text(batch, *this->body_font, line, pen, BODY_COLOR);
                 pen.y += this->body_font->line_height();
             }
 
@@ -372,23 +373,24 @@ namespace
             // body text is one run whatever order the sprites above were drawn in.
             constexpr glm::vec4 LABEL_COLOR{0.65f, 0.70f, 0.80f, 1.0f};
 
-            this->draw_centred(*this->body_font, CRISP_LABEL, glm::vec2{200.0f, 360.0f},
+            this->draw_centred(batch, *this->body_font, CRISP_LABEL, glm::vec2{200.0f, 360.0f},
                                LABEL_COLOR);
 
             if (this->soft_texture.has_value())
             {
-                this->draw_centred(*this->body_font, SMOOTH_LABEL, glm::vec2{960.0f, 800.0f},
+                this->draw_centred(batch, *this->body_font, SMOOTH_LABEL, glm::vec2{960.0f, 800.0f},
                                    LABEL_COLOR);
             }
         }
 
         /// Draws one line with its box centred on `centre`, which is what
         /// measure_text is for.
-        void draw_centred(render::Font& font, const std::string_view text,
-                          const glm::vec2& centre, const glm::vec4& color)
+        void draw_centred(render::SpriteBatch& batch, render::Font& font,
+                          const std::string_view text, const glm::vec2& centre,
+                          const glm::vec4& color)
         {
             const glm::vec2 box = render::measure_text(font, text);
-            render::draw_text(*this->batch, font, text, centre - box * 0.5f, color);
+            render::draw_text(batch, font, text, centre - box * 0.5f, color);
         }
 
         void create_scene()
@@ -437,19 +439,11 @@ namespace
                 this->soft_texture = std::move(*created_soft);
             }
 
-            auto created_batch = render::SpriteBatch::create();
-            if (!created_batch)
-            {
-                log::error(log::Category::RENDER, "{}", created_batch.error());
-                return;
-            }
-
-            this->batch = std::move(*created_batch);
-
             this->load_fonts();
 
-            log::info(log::Category::RENDER, "scene ready: texture {}, batch of {}",
-                      this->texture->id(), this->batch->capacity());
+            log::info(log::Category::RENDER, "scene ready: texture {}, drawing {}",
+                      this->texture->id(),
+                      this->context().renderer.can_draw() ? "enabled" : "unavailable");
         }
 
         void load_fonts()
@@ -495,8 +489,6 @@ namespace
         // between frames — but every other owner of GL objects in this codebase
         // arranges its fields so that the consumer dies first, and an exception
         // would have to be explained.
-        std::optional<render::SpriteBatch> batch;
-
         double elapsed_time = 0.0;
 
         /// Reports the batch's tally once rather than sixty times a second.

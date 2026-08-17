@@ -5,7 +5,7 @@
 #include "cpen/core/event_bus.hh"
 #include "cpen/platform/context.hh"
 #include "cpen/platform/window.hh"
-#include "cpen/render/viewport.hh"
+#include "cpen/render/renderer.hh"
 #include "cpen/runtime/game_context.hh"
 #include "cpen/runtime/state_stack.hh"
 
@@ -33,6 +33,9 @@ namespace cpen::app
             std::uint32_t virtual_height = render::Viewport::DEFAULT_VIRTUAL_HEIGHT;
             render::ScaleMode scale_mode = render::ScaleMode::LETTERBOX;
 
+            /// Sprites the frame's batch holds before it has to flush.
+            std::size_t sprite_capacity = render::SpriteBatch::DEFAULT_CAPACITY;
+
             /// Upper bound on one frame's delta time, in seconds.
             ///
             /// After a breakpoint, a drag of the window or a machine waking from
@@ -59,7 +62,7 @@ namespace cpen::app
 
         runtime::GameContext& context() noexcept { return this->game_context; }
         platform::Window& window() noexcept { return this->main_window; }
-        const render::Viewport& viewport() const noexcept { return this->main_viewport; }
+        render::Renderer& renderer() noexcept { return this->main_renderer; }
 
         /// Runs until the window is closed, the state stack empties, or
         /// request_quit() is called. Returns once the loop has ended; the states
@@ -72,8 +75,8 @@ namespace cpen::app
     private:
         void route_events();
 
-        /// Refits the viewport to the current framebuffer size and hands the
-        /// resulting rectangle to GL.
+        /// Refits the renderer's viewport to the current framebuffer size and hands
+        /// the resulting rectangle to GL.
         ///
         /// Called once during construction and again on every resize. The initial
         /// call is the point: GL's own default viewport is whatever the framebuffer
@@ -82,16 +85,24 @@ namespace cpen::app
         /// make the call, because no state has a window to ask for the size.
         void refit_viewport();
 
+        /// Builds the renderer, falling back to one that cannot draw if its shader
+        /// will not compile.
+        ///
+        /// Reported and survived rather than fatal, as everywhere else a driver
+        /// refuses something: a window that stays up with a readable diagnostic in
+        /// it beats a process that vanished before the message could be read.
+        static render::Renderer make_renderer(const Config& settings);
+
         Config configuration;
 
         // Declaration order is construction order, and every line below depends on
-        // the ones above it: the window needs the platform context, the viewport is
-        // sized from the window's framebuffer, the blackboard publishes to the bus,
-        // the game context refers to them, and the stack hands that context to
-        // every state.
+        // the ones above it: the window needs the platform context, the renderer
+        // compiles a shader and so needs that context current, the blackboard
+        // publishes to the bus, the game context refers to them, and the stack
+        // hands that context to every state.
         platform::Context platform_context;
         platform::Window main_window;
-        render::Viewport main_viewport;
+        render::Renderer main_renderer;
         core::EventBus event_bus;
         core::Blackboard blackboard;
         runtime::GameContext game_context;
