@@ -1,0 +1,199 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second push to the same branch supersedes the first: there is nothing to learn
+# from a run of a commit that is no longer the head of anything.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # The suite that runs anywhere. This is what the two-target split exists for:
+  # tests/gpu/ is excluded from the build entirely, so this job needs no driver,
+  # no display and no graphics hardware.
+  linux:
+    name: Linux, driverless suite
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # Needed by every job, not only the graphical one: GLFW is a dependency of
+      # the engine library itself, so it has to configure and build even where
+      # nothing will open a window.
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+
+      # FetchContent clones glfw, glm, freetype and Catch2 and builds them from
+      # source. Caching the tree it puts them in turns minutes of network and
+      # compilation into seconds. The key carries the CMake files, so a change to
+      # what is fetched or how it is built starts from a clean tree.
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-release-${{ hashFiles('**/CMakeLists.txt') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCPEN_BUILD_GPU_TESTS=OFF
+          -DCPEN_BUILD_DEMO=ON
+
+      # The demo is built rather than skipped: it is the only thing that compiles
+      # against the engine from outside, so it is what catches an API change that
+      # the tests happen not to use.
+      - name: Build
+        run: cmake --build build --parallel
+
+      # The binary directly, not ctest. The suite prints a banner and a trace of
+      # what each case exercised, and ctest swallows all of it -- which is exactly
+      # the output wanted when a run goes red.
+      - name: Run tests
+        run: ./build/tests/cpen_tests
+
+  windows:
+    name: Windows, driverless suite
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-windows-release-${{ hashFiles('**/CMakeLists.txt') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCPEN_BUILD_GPU_TESTS=OFF
+          -DCPEN_BUILD_DEMO=ON
+
+      # Multi-configuration generator, so the build type is chosen here rather than
+      # at configure time, and the binary lands in a per-configuration directory.
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Run tests
+        run: .\build\tests\Release\cpen_tests.exe
+
+  # The graphical suite, on a software rasteriser. Mesa's llvmpipe implements
+  # OpenGL entirely on the CPU, which is slow and completely sufficient: these
+  # cases assert on pixels read back from a framebuffer, and a pixel does not care
+  # what computed it.
+  #
+  # There is no Windows counterpart to this job. That runner's OpenGL is the
+  # generic GDI implementation, which stops at 1.1 and cannot create the 3.3 core
+  # context the engine asks for.
+  gpu:
+    name: Linux, graphical suite on llvmpipe
+    runs-on: ubuntu-latest
+
+    env:
+      # Refuses any hardware driver that might be present, so a pass here means
+      # the software path really was exercised.
+      LIBGL_ALWAYS_SOFTWARE: "1"
+      # A graphics driver allocates freely at context creation and frees none of
+      # it, so LeakSanitizer on this target reports the driver rather than the
+      # engine.
+      LSAN_OPTIONS: detect_leaks=0
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # fonts-dejavu-core is not decoration. The font and text cases borrow a
+      # typeface from the machine and skip themselves when there is none, which is
+      # right on a developer's laptop and a trap here: without a font installed
+      # this job would go green having silently skipped every case that touches
+      # text.
+      - name: Install build and graphics dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols \
+            libgl1 libgl1-mesa-dri mesa-utils xvfb fonts-dejavu-core
+
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-gpu-${{ hashFiles('**/CMakeLists.txt') }}
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCPEN_BUILD_GPU_TESTS=ON
+          -DCPEN_BUILD_DEMO=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      # Reported before the suite runs rather than after it fails: if the context
+      # comes back below 3.3 core, every case will fail for one reason and this is
+      # the line that says which.
+      - name: Report the OpenGL implementation
+        run: xvfb-run -a glxinfo -B || true
+
+      # GLFW needs a display even for a window it never maps, so the suite runs
+      # under a virtual X server.
+      - name: Run graphical tests
+        run: xvfb-run -a --server-args="-screen 0 1280x1024x24" ./build/tests/cpen_gpu_tests
+
+  # Address and undefined-behaviour sanitizers over the driverless suite. Not the
+  # graphical one: its findings would be the driver's.
+  sanitizers:
+    name: Linux, sanitizers
+    runs-on: ubuntu-latest
+
+    env:
+      # Quoted because the value contains a colon. YAML happens to accept it
+      # unquoted here, since the colon is not followed by a space, but that is a
+      # rule not worth depending on in a file nobody reads twice.
+      UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols
+
+      - name: Cache fetched dependencies
+        uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-linux-asan-${{ hashFiles('**/CMakeLists.txt') }}
+
+      # Debug rather than Release, because CPEN_SANITIZE without a build type
+      # produces reports with no line numbers in them -- which the build warns
+      # about, and which would make a red run here nearly useless.
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Debug
+          -DCPEN_SANITIZE=address,undefined
+          -DCPEN_BUILD_GPU_TESTS=OFF
+          -DCPEN_BUILD_DEMO=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Run tests
+        run: ./build/tests/cpen_tests
