@@ -9,6 +9,7 @@
 namespace cpen::render
 {
     class VertexArray;
+    struct ViewportRect;
 
     /// What the stream of vertices is assembled into.
     enum class Primitive : std::uint8_t
@@ -34,6 +35,12 @@ namespace cpen::render
     /// onto. Must be called whenever the framebuffer is resized, or the image keeps
     /// being stretched into the old rectangle.
     void set_viewport(int x, int y, int width, int height);
+
+    /// Applies the rectangle a Viewport computed. The overload exists so that the
+    /// four components are never unpacked and reordered by hand at a call site:
+    /// glViewport's origin is the bottom-left corner, and a transposed y is a bug
+    /// that only shows up on a window whose aspect ratio is not the design one.
+    void set_viewport(const ViewportRect& rect);
 
     /// Clears the colour buffer to `color`, with alpha as its fourth component.
     void clear(const glm::vec4& color);

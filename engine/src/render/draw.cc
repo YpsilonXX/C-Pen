@@ -3,6 +3,7 @@
 
 #include "cpen/core/log.hh"
 #include "cpen/render/vertex_array.hh"
+#include "cpen/render/viewport.hh"
 
 #include <glad/glad.h>
 
@@ -38,6 +39,11 @@ namespace cpen::render
     void set_viewport(const int x, const int y, const int width, const int height)
     {
         glViewport(x, y, static_cast<GLsizei>(width), static_cast<GLsizei>(height));
+    }
+
+    void set_viewport(const ViewportRect& rect)
+    {
+        set_viewport(rect.x, rect.y, rect.width, rect.height);
     }
 
     void clear(const glm::vec4& color)
