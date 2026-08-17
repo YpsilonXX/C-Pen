@@ -1,10 +1,12 @@
 #include <cpen/app/application.hh>
 #include <cpen/core/log.hh>
 #include <cpen/render/draw.hh>
+#include <cpen/render/font.hh>
 #include <cpen/render/image.hh>
 #include <cpen/render/pixel_format.hh>
 #include <cpen/render/sprite.hh>
 #include <cpen/render/sprite_batch.hh>
+#include <cpen/render/text.hh>
 #include <cpen/render/texture.hh>
 #include <cpen/render/viewport.hh>
 #include <cpen/runtime/game_context.hh>
@@ -16,6 +18,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -77,6 +80,50 @@ namespace
         return pixels;
     }
 
+    constexpr std::uint32_t TITLE_PIXEL_SIZE = 64;
+    constexpr std::uint32_t BODY_PIXEL_SIZE = 30;
+
+    /// Width the paragraph is wrapped to, in virtual pixels.
+    constexpr float PARAGRAPH_WIDTH = 760.0f;
+
+    constexpr std::string_view DEMO_TITLE = "C-Pen";
+
+    constexpr std::string_view DEMO_PARAGRAPH =
+        "Текст рисуется теми же спрайтами, что и картинки: глиф — это область "
+        "атласа, а строка — один вызов отрисовки.\n"
+        "Перенос считает кодовые точки, а не байты.";
+
+    /// Finds a typeface installed on the machine.
+    ///
+    /// TODO(F2): the engine has to ship a typeface of its own — a game cannot
+    /// assume the player has one — but that belongs with the asset layer, together
+    /// with everything else that needs a path to come from somewhere honest.
+    /// Borrowing one keeps the repository free of binary fixtures until then, at
+    /// the price of a demo that says so and carries on without text if there is
+    /// nothing to borrow.
+    std::optional<std::filesystem::path> find_system_font()
+    {
+        constexpr std::array<const char*, 6> CANDIDATES = {
+            "/usr/share/fonts/TTF/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
+            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
+            "C:/Windows/Fonts/segoeui.ttf",
+            "C:/Windows/Fonts/arial.ttf",
+        };
+
+        for (const char* const candidate : CANDIDATES)
+        {
+            std::error_code error;
+            if (std::filesystem::exists(candidate, error))
+            {
+                return std::filesystem::path{candidate};
+            }
+        }
+
+        return std::nullopt;
+    }
+
     /// F1 smoke test: an otherwise empty state that clears the window, draws a few
     /// sprites through the batch and quits on Escape. Its purposes are to prove
     /// that a state drives the engine through the stack rather than through a loop
@@ -106,6 +153,8 @@ namespace
         void on_exit() override
         {
             this->batch.reset();
+            this->body_font.reset();
+            this->title_font.reset();
             this->texture.reset();
         }
 
@@ -200,10 +249,53 @@ namespace
                                   .region = {.position = {0.0f, 0.0f}, .size = {1.0f, 1.0f}},
                               });
 
+            this->draw_text_block();
+
             this->batch->end();
+
+            if (!this->reported_batch)
+            {
+                this->reported_batch = true;
+                log::info(log::Category::RENDER,
+                          "first frame: {} sprite(s) in {} draw call(s)",
+                          this->batch->sprite_count(), this->batch->draw_calls());
+            }
         }
 
     private:
+        /// The title and a wrapped paragraph, in the lower-left of the scene.
+        ///
+        /// Submitted into the same open batch as the sprites above, which is the
+        /// claim worth seeing on screen: text is not a second renderer with a
+        /// second shader, it is sprites against a different texture.
+        void draw_text_block()
+        {
+            if (!this->title_font.has_value() || !this->body_font.has_value())
+            {
+                return;
+            }
+
+            constexpr glm::vec2 TEXT_ORIGIN{80.0f, 600.0f};
+            constexpr glm::vec4 TITLE_COLOR{0.95f, 0.85f, 0.55f, 1.0f};
+            constexpr glm::vec4 BODY_COLOR{0.85f, 0.88f, 0.95f, 1.0f};
+
+            render::draw_text(*this->batch, *this->title_font, DEMO_TITLE, TEXT_ORIGIN,
+                              TITLE_COLOR);
+
+            // Measured rather than guessed, so the paragraph sits under the title
+            // whatever the borrowed typeface turns out to be.
+            const glm::vec2 title_box = render::measure_text(*this->title_font, DEMO_TITLE);
+
+            glm::vec2 pen{TEXT_ORIGIN.x, TEXT_ORIGIN.y + title_box.y};
+
+            for (const std::string_view line :
+                 render::wrap_text(*this->body_font, DEMO_PARAGRAPH, PARAGRAPH_WIDTH))
+            {
+                render::draw_text(*this->batch, *this->body_font, line, pen, BODY_COLOR);
+                pen.y += this->body_font->line_height();
+            }
+        }
+
         void create_scene()
         {
             // Nearest filtering, because the checkerboard is eight texels across
@@ -242,11 +334,45 @@ namespace
 
             this->batch = std::move(*created_batch);
 
+            this->load_fonts();
+
             log::info(log::Category::RENDER, "scene ready: texture {}, batch of {}",
                       this->texture->id(), this->batch->capacity());
         }
 
+        void load_fonts()
+        {
+            const std::optional<std::filesystem::path> path = find_system_font();
+            if (!path.has_value())
+            {
+                log::warn(log::Category::RENDER,
+                          "no typeface was found to borrow; the demo runs without text");
+                return;
+            }
+
+            auto title = render::Font::from_file(*path, TITLE_PIXEL_SIZE);
+            auto body = render::Font::from_file(*path, BODY_PIXEL_SIZE);
+
+            if (!title || !body)
+            {
+                log::error(log::Category::RENDER, "{}",
+                           title ? body.error() : title.error());
+                return;
+            }
+
+            this->title_font = std::move(*title);
+            this->body_font = std::move(*body);
+        }
+
         std::optional<render::Texture> texture;
+
+        // Two sizes of one typeface, which the engine treats exactly as two
+        // different typefaces would be treated: each owns its atlas, and drawing
+        // with both splits the batch the same way two pictures would. Held as
+        // separate objects rather than selected by a parameter, so that changing
+        // the font at runtime is a matter of passing a different one.
+        std::optional<render::Font> title_font;
+        std::optional<render::Font> body_font;
 
         // Declared after the texture, and so destroyed before it. Nothing here
         // requires that order today — the batch holds no reference to the texture
@@ -256,6 +382,9 @@ namespace
         std::optional<render::SpriteBatch> batch;
 
         double elapsed_time = 0.0;
+
+        /// Reports the batch's tally once rather than sixty times a second.
+        bool reported_batch = false;
     };
 }
 
