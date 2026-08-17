@@ -50,6 +50,17 @@ namespace cpen::render
         STREAM,
     };
 
+    constexpr std::string_view to_string(const BufferUsage usage) noexcept
+    {
+        switch (usage)
+        {
+            case BufferUsage::STATIC:  return "static";
+            case BufferUsage::DYNAMIC: return "dynamic";
+            case BufferUsage::STREAM:  return "stream";
+        }
+        return "unknown";
+    }
+
     namespace detail
     {
         /// Reinterprets any contiguous range as the bytes the GL entry points take.
@@ -129,6 +140,22 @@ namespace cpen::render
         {
             this->update_bytes(detail::bytes_of(data), offset_in_bytes);
         }
+
+        /// Discards the store's contents and asks the driver for fresh memory of the
+        /// same size and usage.
+        ///
+        /// This is what keeps a per-frame stream buffer from stalling. Overwriting a
+        /// buffer the GPU is still reading from — and it is still reading, a frame or
+        /// two behind — leaves the driver two choices: block until the previous draw
+        /// has finished with it, or quietly allocate a copy. The first costs
+        /// milliseconds. Orphaning first says the old contents are not wanted, so the
+        /// driver hands over a new block immediately and retires the old one when the
+        /// commands that read it complete. Nothing else in this class can cost that
+        /// much, which is why this is the only method here that exists for speed.
+        ///
+        /// The name stays valid: what is replaced is the storage behind it. Vertex
+        /// arrays that read from this buffer therefore need no reattaching.
+        void orphan();
 
         BufferTarget target() const noexcept { return this->buffer_target; }
         BufferUsage usage() const noexcept { return this->buffer_usage; }

@@ -69,6 +69,22 @@ namespace cpen::render
     void draw_elements(const VertexArray& vertices, Primitive primitive,
                        std::size_t index_count,
                        IndexType index_type = IndexType::UNSIGNED_INT);
+
+    /// Draws the same indexed geometry `instance_count` times, with the attributes
+    /// whose layout carried a non-zero instance_divisor advancing once per instance
+    /// instead of once per vertex.
+    ///
+    /// This is what turns a thousand sprites into one draw call: the quad's four
+    /// vertices and six indices are uploaded once and never touched again, and only
+    /// the per-instance record — where the sprite is, what part of the texture it
+    /// shows, what colour it is tinted — is rewritten each frame.
+    ///
+    /// An instance count of zero draws nothing, as an index count of zero does.
+    /// There is no draw_arrays_instanced beside this one: nothing needs it yet, and
+    /// a draw call with no caller could not be tested against anything real.
+    void draw_elements_instanced(const VertexArray& vertices, Primitive primitive,
+                                 std::size_t index_count, std::size_t instance_count,
+                                 IndexType index_type = IndexType::UNSIGNED_INT);
 }
 
 #endif //CPEN_RENDER_DRAW_HH

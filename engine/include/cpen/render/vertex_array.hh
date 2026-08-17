@@ -83,7 +83,32 @@ namespace cpen::render
         /// array continues the numbering rather than restarting it.
         unsigned int first_location = 0;
 
-        /// The distance in bytes between consecutive vertices.
+        /// How many instances share one element of this buffer.
+        ///
+        /// Zero, the default, is per-vertex data: the attribute advances once per
+        /// vertex and the buffer is read start to finish by every instance. One is
+        /// per-instance data: the attribute holds still for all the vertices of an
+        /// instance and advances when the next one begins. Higher values share one
+        /// element between that many consecutive instances.
+        ///
+        /// Recorded per layout rather than per attribute, although GL sets it per
+        /// attribute: a buffer holds data at one rate, and attributes at two
+        /// different rates in one interleaved store would be a stride that means
+        /// two different things at once.
+        unsigned int instance_divisor = 0;
+
+        /// Unused bytes at the end of each element, past the last attribute.
+        ///
+        /// Added to the stride, so the attributes of the next element start after
+        /// it. Present because a record is sometimes worth padding to a convenient
+        /// size — the sprite batch pads its instance record from 44 bytes to 48 so
+        /// the stride is a multiple of sixteen — and the alternative, a dummy
+        /// attribute the shader ignores, would spend a real attribute slot and a
+        /// real vertex fetch on nothing.
+        std::size_t trailing_padding = 0;
+
+        /// The distance in bytes between consecutive elements: every attribute's
+        /// size, plus the trailing padding.
         std::size_t stride() const;
     };
 

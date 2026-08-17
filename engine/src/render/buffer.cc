@@ -69,8 +69,8 @@ namespace cpen::render
                      to_gl_usage(usage));
         glBindBuffer(UPLOAD_TARGET, 0);
 
-        log::debug(log::Category::RENDER, "{} buffer {} created, {} byte(s)",
-                   to_string(target), this->handle, size_in_bytes);
+        log::debug(log::Category::RENDER, "{} buffer {} created, {} byte(s), {} usage",
+                   to_string(target), this->handle, size_in_bytes, to_string(usage));
     }
 
     Buffer::~Buffer()
@@ -117,6 +117,19 @@ namespace cpen::render
     void Buffer::unbind(const BufferTarget target)
     {
         glBindBuffer(to_gl_target(target), 0);
+    }
+
+    void Buffer::orphan()
+    {
+        // Reallocating with the same size and usage and a null pointer is the
+        // idiom: glBufferData always replaces the store rather than editing it, so
+        // passing no data is what makes the replacement an orphaning rather than an
+        // upload. Through GL_ARRAY_BUFFER like every other write here, for the
+        // reason given at UPLOAD_TARGET.
+        glBindBuffer(UPLOAD_TARGET, this->handle);
+        glBufferData(UPLOAD_TARGET, static_cast<GLsizeiptr>(this->store_size), nullptr,
+                     to_gl_usage(this->buffer_usage));
+        glBindBuffer(UPLOAD_TARGET, 0);
     }
 
     void Buffer::update_bytes(const std::span<const std::byte> data,

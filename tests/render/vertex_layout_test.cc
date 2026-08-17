@@ -55,6 +55,38 @@ TEST_CASE("the stride is the total size of the interleaved attributes", "[render
     }
 }
 
+TEST_CASE("trailing padding is part of the stride", "[render][layout]")
+{
+    // The sprite batch's instance record: two vec4s, a vec2 and a packed colour
+    // come to 44 bytes, and four bytes of padding round the stride up to a
+    // multiple of sixteen. The attributes are unaffected — only the distance to
+    // the next record changes — which is the whole point of expressing it here
+    // rather than as a fifth attribute nothing reads.
+    const VertexLayout instances{
+        .attributes = {
+            {.type = AttributeType::FLOAT, .component_count = 4},
+            {.type = AttributeType::FLOAT, .component_count = 4},
+            {.type = AttributeType::FLOAT, .component_count = 2},
+            {.type = AttributeType::UNSIGNED_BYTE, .component_count = 4, .normalized = true},
+        },
+        .instance_divisor = 1,
+        .trailing_padding = 4,
+    };
+
+    trace("44 bytes of attributes + 4 of padding gives a stride of {}", instances.stride());
+
+    CHECK(instances.stride() == 48);
+    CHECK(instances.stride() % 16 == 0);
+
+    SECTION("and without it the same attributes stop at their own total")
+    {
+        VertexLayout unpadded = instances;
+        unpadded.trailing_padding = 0;
+
+        CHECK(unpadded.stride() == 44);
+    }
+}
+
 TEST_CASE("an attribute reports the room it takes in a vertex", "[render][layout]")
 {
     constexpr cpen::render::VertexAttribute position{

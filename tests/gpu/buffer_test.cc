@@ -254,3 +254,65 @@ TEST_CASE("creating a buffer leaves a bound vertex array's index binding alone",
     CHECK(static_cast<unsigned int>(bound) == first.id());
     CHECK(array.index_buffer_id() == first.id());
 }
+
+TEST_CASE("orphaning replaces the store and keeps everything else",
+          "[render][buffer][gpu]")
+{
+    gl_context();
+
+    Buffer buffer = Buffer::vertex(VERTEX_DATA, BufferUsage::STREAM);
+
+    const unsigned int name = buffer.id();
+    const std::size_t size = buffer.size_in_bytes();
+
+    buffer.orphan();
+
+    trace("buffer {} orphaned: still {} byte(s), still a {} buffer, still {}", buffer.id(),
+          buffer.size_in_bytes(), to_string(buffer.target()), to_string(buffer.usage()));
+
+    // The name survives, which is the property the whole idiom rests on: a vertex
+    // array holds the buffer's name, so an orphan that changed it would silently
+    // detach every array reading from this buffer.
+    CHECK(buffer.id() == name);
+    CHECK(glIsBuffer(name) == GL_TRUE);
+    CHECK(buffer.size_in_bytes() == size);
+    CHECK(buffer.target() == BufferTarget::VERTEX);
+    CHECK(buffer.usage() == BufferUsage::STREAM);
+
+    SECTION("and the fresh store takes an ordinary update")
+    {
+        constexpr std::array<float, 6> REPLACEMENT = {9.0f, 8.0f, 7.0f, 6.0f, 5.0f, 4.0f};
+        buffer.update(REPLACEMENT);
+
+        const auto read = read_back<float, 6>(buffer);
+        trace("after orphan and update: {} {} {} {} {} {}", read[0], read[1], read[2],
+              read[3], read[4], read[5]);
+
+        CHECK(read == REPLACEMENT);
+    }
+}
+
+TEST_CASE("orphaning an index buffer leaves a bound vertex array alone",
+          "[render][buffer][gpu]")
+{
+    gl_context();
+
+    VertexArray array;
+    Buffer indices = Buffer::index(INDEX_DATA);
+    array.set_index_buffer(indices);
+
+    // The same trap creation has to avoid: orphaning goes through GL_ARRAY_BUFFER,
+    // so it cannot disturb the element array binding this array is holding.
+    array.bind();
+    indices.orphan();
+
+    GLint bound = 0;
+    glGetIntegerv(GL_ELEMENT_ARRAY_BUFFER_BINDING, &bound);
+    VertexArray::unbind();
+
+    trace("array {} still points at index buffer {} after it was orphaned", array.id(),
+          bound);
+
+    CHECK(static_cast<unsigned int>(bound) == indices.id());
+    CHECK(array.index_buffer_id() == indices.id());
+}

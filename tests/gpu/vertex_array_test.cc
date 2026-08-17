@@ -336,3 +336,92 @@ TEST_CASE("moving a vertex array transfers the object without deleting it",
     trace("destination destroyed, vertex array {} should now be gone", name);
     CHECK(glIsVertexArray(name) == GL_FALSE);
 }
+
+TEST_CASE("the instance divisor is recorded per attribute", "[render][vertex_array][gpu]")
+{
+    gl_context();
+
+    const Buffer vertices = Buffer::vertex(INTERLEAVED_DATA);
+    const Buffer instances = Buffer::vertex(INTERLEAVED_DATA);
+
+    VertexArray array;
+    array.attach(vertices, interleaved_layout(0));
+    array.attach(instances, VertexLayout{
+                                .attributes = {{.type = AttributeType::FLOAT,
+                                                .component_count = 4}},
+                                .first_location = 2,
+                                .instance_divisor = 1,
+                            });
+
+    const GLint per_vertex =
+        attribute_parameter(array, 0, GL_VERTEX_ATTRIB_ARRAY_DIVISOR);
+    const GLint per_instance =
+        attribute_parameter(array, 2, GL_VERTEX_ATTRIB_ARRAY_DIVISOR);
+
+    trace("slot 0 divisor {}, slot 2 divisor {}", per_vertex, per_instance);
+
+    CHECK(per_vertex == 0);
+    CHECK(per_instance == 1);
+}
+
+TEST_CASE("a layout's divisor is written even when it is the default",
+          "[render][vertex_array][gpu]")
+{
+    gl_context();
+
+    const Buffer instances = Buffer::vertex(INTERLEAVED_DATA);
+    const Buffer vertices = Buffer::vertex(INTERLEAVED_DATA);
+
+    VertexArray array;
+
+    // Slot 3 is given a divisor first and then reattached without one. The divisor
+    // is per-attribute state of the array, so a second attach that only set the
+    // non-default values would leave the one from the first attach in place, and a
+    // layout would then describe an attachment only partly.
+    array.attach(instances, VertexLayout{
+                                .attributes = {{.type = AttributeType::FLOAT,
+                                                .component_count = 2}},
+                                .first_location = 3,
+                                .instance_divisor = 4,
+                            });
+
+    REQUIRE(attribute_parameter(array, 3, GL_VERTEX_ATTRIB_ARRAY_DIVISOR) == 4);
+
+    array.attach(vertices, VertexLayout{
+                               .attributes = {{.type = AttributeType::FLOAT,
+                                               .component_count = 2}},
+                               .first_location = 3,
+                           });
+
+    const GLint divisor = attribute_parameter(array, 3, GL_VERTEX_ATTRIB_ARRAY_DIVISOR);
+    trace("slot 3 divisor after the second attach: {}", divisor);
+
+    CHECK(divisor == 0);
+}
+
+TEST_CASE("trailing padding widens the stride the array records",
+          "[render][vertex_array][gpu]")
+{
+    gl_context();
+
+    const Buffer buffer = Buffer::vertex(INTERLEAVED_DATA);
+
+    VertexArray array;
+    array.attach(buffer, VertexLayout{
+                             .attributes = {
+                                 {.type = AttributeType::FLOAT, .component_count = 2},
+                                 {.type = AttributeType::FLOAT, .component_count = 3},
+                             },
+                             .trailing_padding = 4,
+                         });
+
+    const GLint stride = attribute_parameter(array, 0, GL_VERTEX_ATTRIB_ARRAY_STRIDE);
+    const std::uintptr_t second_offset = attribute_offset(array, 1);
+
+    trace("stride {}, second attribute at offset {}", stride, second_offset);
+
+    // The padding lands after the last attribute, so it moves the next element
+    // along without moving any attribute within this one.
+    CHECK(stride == 24);
+    CHECK(second_offset == 8);
+}

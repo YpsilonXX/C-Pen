@@ -41,7 +41,7 @@ namespace cpen::render
 
     std::size_t VertexLayout::stride() const
     {
-        std::size_t total = 0;
+        std::size_t total = this->trailing_padding;
         for (const VertexAttribute& attribute : this->attributes)
         {
             total += attribute.size_in_bytes();
@@ -178,6 +178,13 @@ namespace cpen::render
                                       static_cast<GLsizei>(stride), offset_pointer);
             }
 
+            // Set unconditionally, including for the default of zero. The divisor is
+            // per-attribute state of the vertex array, and an attribute slot may
+            // well have been left at a non-zero divisor by whatever used it last:
+            // writing the value every time is what makes a layout describe the
+            // attachment completely rather than only the parts that differ.
+            glVertexAttribDivisor(location, layout.instance_divisor);
+
             offset += attribute.size_in_bytes();
             ++location;
             ++this->enabled_attributes;
@@ -187,8 +194,10 @@ namespace cpen::render
         Buffer::unbind(BufferTarget::VERTEX);
 
         log::debug(log::Category::RENDER,
-                   "vertex array {}: buffer {} feeds slot(s) {}..{}, stride {} byte(s)",
-                   this->handle, buffer.id(), layout.first_location, location - 1, stride);
+                   "vertex array {}: buffer {} feeds slot(s) {}..{}, stride {} byte(s), "
+                   "divisor {}",
+                   this->handle, buffer.id(), layout.first_location, location - 1, stride,
+                   layout.instance_divisor);
     }
 
     void VertexArray::set_index_buffer(const Buffer& buffer)

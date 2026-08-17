@@ -94,4 +94,33 @@ namespace cpen::render
 
         VertexArray::unbind();
     }
+
+    void draw_elements_instanced(const VertexArray& vertices, const Primitive primitive,
+                                 const std::size_t index_count,
+                                 const std::size_t instance_count,
+                                 const IndexType index_type)
+    {
+        if (index_count == 0 || instance_count == 0)
+        {
+            return;
+        }
+
+        if (!vertices.has_index_buffer())
+        {
+            log::error(log::Category::RENDER,
+                       "vertex array {}: an instanced indexed draw of {} index/indices "
+                       "across {} instance(s) was asked for, but no index buffer was ever "
+                       "recorded; the draw is skipped",
+                       vertices.id(), index_count, instance_count);
+            return;
+        }
+
+        vertices.bind();
+
+        glDrawElementsInstanced(to_gl_primitive(primitive), static_cast<GLsizei>(index_count),
+                                to_gl_index_type(index_type), nullptr,
+                                static_cast<GLsizei>(instance_count));
+
+        VertexArray::unbind();
+    }
 }
