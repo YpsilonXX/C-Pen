@@ -47,6 +47,12 @@ namespace cpen::platform
             /// it into whatever size the window happens to be, so resizing is
             /// allowed by default.
             bool resizable = true;
+
+            /// Map the window on screen. The game always wants this; a test that
+            /// needs nothing but a GL context does not, and creating the window
+            /// hidden is how a context is obtained without a window flashing up
+            /// for the duration of the run.
+            bool visible = true;
         };
 
         Window(Context& context, const Config& config);

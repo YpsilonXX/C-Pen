@@ -7,6 +7,11 @@ namespace cpen::core
     class EventBus;
 }
 
+namespace cpen::render
+{
+    class Renderer;
+}
+
 namespace cpen::runtime
 {
     /// The engine services every game state is given.
@@ -25,8 +30,18 @@ namespace cpen::runtime
         core::Blackboard& blackboard;
         core::EventBus& event_bus;
 
-        // Extended as the layers below appear: asset manager (F1), renderer and
-        // presentation (F1-F3), audio (F5).
+        /// Everything a state needs in order to draw, and the only route it has to
+        /// the render layer. Carries the viewport, so the coordinate system is
+        /// reachable as renderer.viewport() by anything that wants to convert a
+        /// coordinate without drawing anything.
+        ///
+        /// Non-const, because drawing genuinely changes what the renderer holds.
+        /// The frame around it is not the state's to open: the Application does
+        /// that once, either side of the whole render pass.
+        render::Renderer& renderer;
+
+        // Extended as the layers below appear: asset manager (F1), presentation
+        // (F2-F3), audio (F5).
     };
 }
 
