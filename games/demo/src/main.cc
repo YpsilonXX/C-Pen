@@ -1,16 +1,14 @@
 #include <cpen/app/application.hh>
 #include <cpen/core/log.hh>
-#include <cpen/render/buffer.hh>
 #include <cpen/render/draw.hh>
 #include <cpen/render/image.hh>
 #include <cpen/render/pixel_format.hh>
-#include <cpen/render/shader.hh>
+#include <cpen/render/sprite.hh>
+#include <cpen/render/sprite_batch.hh>
 #include <cpen/render/texture.hh>
-#include <cpen/render/vertex_array.hh>
 #include <cpen/render/viewport.hh>
 #include <cpen/runtime/game_context.hh>
 #include <cpen/runtime/game_state.hh>
-#include <cpen/runtime/state_stack.hh>
 
 #include <glm/glm.hpp>
 
@@ -28,81 +26,6 @@ using namespace cpen;
 
 namespace
 {
-    /// Positions arrive in virtual pixels — the 1920x1080 space the game is
-    /// authored in — and the projection supplied by the engine's viewport carries
-    /// them into clip space. The uniform is written once at creation rather than
-    /// per frame: letterboxing changes which part of the window is drawn into, and
-    /// never the coordinate system drawn in.
-    constexpr const char* QUAD_VERTEX_SHADER = R"(#version 330 core
-layout (location = 0) in vec2 in_position;
-layout (location = 1) in vec2 in_texture_coordinate;
-
-uniform mat4 projection;
-
-out vec2 texture_coordinate;
-
-void main()
-{
-    texture_coordinate = in_texture_coordinate;
-    gl_Position = projection * vec4(in_position, 0.0, 1.0);
-}
-)";
-
-    /// The tint is applied to the sampled colour rather than replacing it, so that
-    /// a frame in which the texture failed to load is obviously black rather than
-    /// merely dim.
-    constexpr const char* QUAD_FRAGMENT_SHADER = R"(#version 330 core
-in vec2 texture_coordinate;
-
-uniform sampler2D source;
-uniform float tint;
-
-out vec4 fragment_color;
-
-void main()
-{
-    fragment_color = texture(source, texture_coordinate) * vec4(vec3(tint), 1.0);
-}
-)";
-
-    /// The texture unit the quad's sampler reads from. Written into the `source`
-    /// uniform as a plain integer, which is what a sampler uniform holds: not the
-    /// texture's name, but the number of the unit it is bound to.
-    constexpr int QUAD_TEXTURE_UNIT = 0;
-
-    /// Interleaved vertex data: two position components followed by two texture
-    /// coordinates, per vertex.
-    ///
-    /// Positions are in virtual pixels, with the origin at the top left and y
-    /// growing downwards — a 640x640 square centred in the 1920x1080 design space.
-    /// Written out rather than computed from the viewport, because the point of a
-    /// fixed virtual resolution is that a position is a constant of the scene and
-    /// not a function of the window.
-    ///
-    /// The texture coordinates put v = 0 on the *top* edge of the quad, which is
-    /// the engine's convention and the reason render::Image never flips a decoded
-    /// picture. GL numbers texture rows from the first one uploaded, and Image
-    /// hands over the file's first row — the top of the picture — first. Mapping
-    /// v = 0 to the top here is therefore what makes the image appear the right
-    /// way up, at the cost of nothing at all; flipping the pixels instead would
-    /// cost a copy of every asset at load time. Note that the same reasoning now
-    /// applies to the positions: both axes agree, so the marker texel written at
-    /// texture row zero belongs at the vertex with the smallest y.
-    constexpr std::array<float, 16> QUAD_VERTICES = {
-        // position          texture coordinate
-         640.0f,  220.0f,    0.0f, 0.0f,   // top left
-        1280.0f,  220.0f,    1.0f, 0.0f,   // top right
-        1280.0f,  860.0f,    1.0f, 1.0f,   // bottom right
-         640.0f,  860.0f,    0.0f, 1.0f,   // bottom left
-    };
-
-    /// Two triangles sharing the quad's leading diagonal. Indexed rather than six
-    /// separate vertices, so that the demo exercises the index-buffer path as
-    /// well — this is how every sprite the batch draws will be assembled.
-    constexpr std::array<std::uint32_t, 6> QUAD_INDICES = {0, 1, 2, 2, 3, 0};
-
-    constexpr std::size_t QUAD_INDEX_COUNT = QUAD_INDICES.size();
-
     constexpr glm::vec4 BACKGROUND_COLOR{0.1f, 0.1f, 0.15f, 1.0f};
 
     /// Side of the generated checkerboard, in texels.
@@ -154,16 +77,17 @@ void main()
         return pixels;
     }
 
-    /// F1 smoke test: an otherwise empty state that clears the window, draws one
-    /// textured quad and quits on Escape. Its purposes are to prove that a state
-    /// drives the engine through the stack rather than through a loop written in
-    /// the game, and that the render layer can be driven from a state.
+    /// F1 smoke test: an otherwise empty state that clears the window, draws a few
+    /// sprites through the batch and quits on Escape. Its purposes are to prove
+    /// that a state drives the engine through the stack rather than through a loop
+    /// written in the game, and that the render layer can be driven from a state.
     ///
-    /// Nothing here names a GL type or includes a GL header: the shader, the
-    /// vertex and index data, the texture and the draw call all go through
-    /// render/. Nor does it manage the window: positions are in virtual pixels and
-    /// the engine's viewport letterboxes them, so resizing the window neither
-    /// distorts the quad nor requires the state to do anything.
+    /// Nothing here names a GL type, includes a GL header, compiles a shader or
+    /// touches a buffer: a scene is a texture and a handful of Sprite values, and
+    /// the batch turns the four of them below into one draw call because they share
+    /// a texture. Nor does the state manage the window — positions are in virtual
+    /// pixels and the engine's viewport letterboxes them, so resizing distorts
+    /// nothing and requires nothing.
     class DemoState final : public runtime::GameState
     {
     public:
@@ -172,7 +96,7 @@ void main()
         void on_enter() override
         {
             log::info(log::Category::APP, "demo state entered");
-            this->create_quad();
+            this->create_scene();
         }
 
         /// GL resources are released here rather than in the destructor because
@@ -181,7 +105,8 @@ void main()
         /// down first and the context outlives every state.
         void on_exit() override
         {
-            this->destroy_quad();
+            this->batch.reset();
+            this->texture.reset();
         }
 
         bool handle_event(const platform::Event& event) override
@@ -202,10 +127,10 @@ void main()
             }
             else if (const auto* resize = std::get_if<platform::ResizeEvent>(&event))
             {
-                // Nothing is done about it here any more: the Application refits
-                // the viewport before the event reaches the stack, and the quad's
-                // coordinates are virtual, so the scene needs no adjusting at all.
-                // Logged only to make that visible while running the demo.
+                // Nothing is done about it here: the Application refits the viewport
+                // before the event reaches the stack, and the sprites are positioned
+                // in virtual pixels, so the scene needs no adjusting at all. Logged
+                // only to make that visible while running the demo.
                 log::debug(log::Category::APP,
                            "framebuffer resized to {}x{}, content now {}x{} at ({}, {})",
                            resize->width, resize->height,
@@ -228,54 +153,59 @@ void main()
         {
             render::clear(BACKGROUND_COLOR);
 
-            if (!this->shader.has_value() || !this->texture.has_value() ||
-                !this->quad_array.has_value())
+            if (!this->batch.has_value() || !this->texture.has_value())
             {
                 return;
             }
 
-            this->shader->bind();
+            const auto seconds = static_cast<float>(this->elapsed_time);
 
-            // Nothing needs a pulsing quad; the uniform exists so that the path
-            // from a state through Shader to the driver is exercised every frame
-            // rather than only at startup.
-            const auto tint = static_cast<float>(0.75 + 0.25 * std::sin(this->elapsed_time * 2.0));
-            this->shader->set_uniform("tint", tint);
-            this->shader->set_uniform("source", QUAD_TEXTURE_UNIT);
+            this->batch->begin(this->context().viewport.projection());
 
-            this->texture->bind(QUAD_TEXTURE_UNIT);
+            // Anchored at the top-left corner of virtual space, at its natural
+            // orientation. The red marker texel belongs in *its* top-left corner,
+            // which is the whole scene's answer to which way up everything is.
+            this->batch->draw(*this->texture, render::Sprite{
+                                                  .position = {80.0f, 80.0f},
+                                                  .size = {240.0f, 240.0f},
+                                              });
 
-            render::draw_elements(*this->quad_array, render::Primitive::TRIANGLES,
-                                  QUAD_INDEX_COUNT);
+            // Turning about its own middle. Rotation is what the affine transform
+            // was chosen for, and a sprite that stays put while it turns is what
+            // proves the origin is carried through the same axes as the corners.
+            this->batch->draw(*this->texture, render::Sprite{
+                                                  .position = {960.0f, 540.0f},
+                                                  .size = {420.0f, 420.0f},
+                                                  .origin = {0.5f, 0.5f},
+                                                  .rotation = seconds * 0.6f,
+                                              });
 
-            render::Texture::unbind(QUAD_TEXTURE_UNIT);
-            render::Shader::unbind();
+            // Overlapping the one above with a pulsing alpha, so the blend mode the
+            // batch enables is visible rather than merely configured.
+            const float pulse = 0.35f + 0.25f * std::sin(seconds * 2.0f);
+            this->batch->draw(*this->texture, render::Sprite{
+                                                  .position = {1120.0f, 700.0f},
+                                                  .size = {360.0f, 300.0f},
+                                                  .origin = {0.5f, 0.5f},
+                                                  .color = {0.4f, 1.0f, 0.6f, pulse},
+                                              });
+
+            // One texel of the texture, blown up. The region is in texels, so the
+            // marker is asked for by the coordinates it was written at.
+            this->batch->draw(*this->texture,
+                              render::Sprite{
+                                  .position = {1700.0f, 160.0f},
+                                  .size = {160.0f, 160.0f},
+                                  .origin = {0.5f, 0.5f},
+                                  .region = {.position = {0.0f, 0.0f}, .size = {1.0f, 1.0f}},
+                              });
+
+            this->batch->end();
         }
 
     private:
-        void create_quad()
+        void create_scene()
         {
-            auto created_shader = render::Shader::create("demo.quad", QUAD_VERTEX_SHADER,
-                                                         QUAD_FRAGMENT_SHADER);
-            if (!created_shader)
-            {
-                // Reported, not fatal: the window stays up and the diagnostic
-                // stays readable, which is the whole point of routing this through
-                // std::expected instead of aborting.
-                log::error(log::Category::RENDER, "{}", created_shader.error());
-                return;
-            }
-
-            this->shader = std::move(*created_shader);
-
-            // Written once, not per frame. The projection is a property of the
-            // virtual resolution, which never changes, and a uniform's value lives
-            // in the program object rather than in the context — so this survives
-            // every later bind.
-            this->shader->bind();
-            this->shader->set_uniform("projection", this->context().viewport.projection());
-            render::Shader::unbind();
-
             // Nearest filtering, because the checkerboard is eight texels across
             // and stretched over most of the window: linear filtering would blur
             // every cell boundary into a gradient and hide exactly what the
@@ -294,56 +224,36 @@ void main()
                 });
             if (!created_texture)
             {
+                // Reported, not fatal: the window stays up and the diagnostic
+                // stays readable, which is the whole point of routing this through
+                // std::expected instead of aborting.
                 log::error(log::Category::RENDER, "{}", created_texture.error());
                 return;
             }
 
             this->texture = std::move(*created_texture);
 
-            this->quad_vertices = render::Buffer::vertex(QUAD_VERTICES);
-            this->quad_indices = render::Buffer::index(QUAD_INDICES);
+            auto created_batch = render::SpriteBatch::create();
+            if (!created_batch)
+            {
+                log::error(log::Category::RENDER, "{}", created_batch.error());
+                return;
+            }
 
-            this->quad_array.emplace();
-            this->quad_array->attach(*this->quad_vertices,
-                                     render::VertexLayout{
-                                         .attributes = {
-                                             {.type = render::AttributeType::FLOAT,
-                                              .component_count = 2},
-                                             {.type = render::AttributeType::FLOAT,
-                                              .component_count = 2},
-                                         },
-                                         .first_location = 0,
-                                     });
-            this->quad_array->set_index_buffer(*this->quad_indices);
+            this->batch = std::move(*created_batch);
 
-            log::info(log::Category::RENDER,
-                      "quad ready: array {}, vertices {}, indices {}, texture {}",
-                      this->quad_array->id(), this->quad_vertices->id(),
-                      this->quad_indices->id(), this->texture->id());
+            log::info(log::Category::RENDER, "scene ready: texture {}, batch of {}",
+                      this->texture->id(), this->batch->capacity());
         }
 
-        void destroy_quad()
-        {
-            // Released in the reverse of the order they were created. The array
-            // reads from the buffers, so it goes first — the same reason the
-            // fields below are declared with the array last.
-            this->quad_array.reset();
-            this->quad_indices.reset();
-            this->quad_vertices.reset();
-            this->texture.reset();
-            this->shader.reset();
-        }
-
-        std::optional<render::Shader> shader;
         std::optional<render::Texture> texture;
 
-        // Declaration order is the lifetime contract: members are destroyed in
-        // reverse, so the array that reads from the buffers is torn down before
-        // the buffers it reads from. VertexArray does not own its buffers, and
-        // this is what stands in for that ownership.
-        std::optional<render::Buffer> quad_vertices;
-        std::optional<render::Buffer> quad_indices;
-        std::optional<render::VertexArray> quad_array;
+        // Declared after the texture, and so destroyed before it. Nothing here
+        // requires that order today — the batch holds no reference to the texture
+        // between frames — but every other owner of GL objects in this codebase
+        // arranges its fields so that the consumer dies first, and an exception
+        // would have to be explained.
+        std::optional<render::SpriteBatch> batch;
 
         double elapsed_time = 0.0;
     };
