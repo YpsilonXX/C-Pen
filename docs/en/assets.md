@@ -29,6 +29,75 @@ engine's without having to know that a default existed. There is no way to ask
 for a specific root: an asset has one name, and which file answers to it is the
 mount order's business.
 
+## Identifiers: what a game actually writes
+
+A script never spells a path. It names the asset and says what it is for:
+
+```
+scene room                 -> a BACKGROUND called "room"
+show alice happy           -> a SPRITE called "alice/happy"
+play music theme           -> AUDIO called "theme"
+```
+
+The kind comes from the statement, the identifier from the author, and the
+engine turns the pair into a path:
+
+| Kind | Directory | Tried extensions, in order | `room` resolves to |
+|---|---|---|---|
+| background | `assets/bg/` | `png`, `jpg`, `jpeg` | `assets/bg/room.png` |
+| sprite | `assets/sprites/` | `png`, `jpg`, `jpeg` | `assets/sprites/room.png` |
+| font | `assets/fonts/` | `ttf`, `otf` | `assets/fonts/room.ttf` |
+| audio | `assets/audio/` | `ogg`, `wav`, `mp3`, `flac` | `assets/audio/room.ogg` |
+| script | `script/` | `pen` | `script/room.pen` |
+
+Scripts sit beside `assets/` rather than inside it: they are the game, not
+something the game shows.
+
+Because the kind is part of the question, a background and a character may both
+be called `alice` without colliding.
+
+### Identifiers carry no extension
+
+```
+show alice happy           good
+show alice happy.png       refused
+```
+
+Finding the file type is the engine's job — that is what makes `png` → `jpg`
+a decision about the file and not an edit to every line that mentions it. An
+identifier ending in an extension the kind knows is refused with the spelling it
+should have had. A dot that is not an extension (`alice.happy`) is an ordinary
+character and is fine.
+
+Otherwise an identifier follows the same rules as a virtual path: `/` groups,
+nothing else separates, and everything in the table below applies to it too.
+
+### More than one file for one identifier
+
+`assets/bg/room.png` and `assets/bg/room.jpg` both answer to `room`. The first
+extension in the table wins — deterministically, so nothing breaks — but the
+engine says so once:
+
+```
+[warn] [assets] background 'room' matches more than one file
+       (assets/bg/room.png, assets/bg/room.jpg); using 'assets/bg/room.png'.
+```
+
+This is worth a line in the log because the failure mode is silent: an author who
+converts a picture and leaves the original behind spends an afternoon editing a
+file the game never opens. The extra probing this needs happens only while the
+path audit is on, so a release build stops at the first file it finds.
+
+### Aliases
+
+An identifier can be pointed at a path of its own, which is how the manifest will
+override the convention — for an asset kept somewhere unusual, one shared between
+two names, or later an entry inside a packed atlas. An alias is checked when it
+is registered (a hand-typed path with a typo is refused there and then) and again
+when it is used (a well-formed path to a file that does not exist reports that it
+came from an alias, so the author knows to look in the manifest and not in the
+script).
+
 ## What a virtual path may contain
 
 A virtual path is UTF-8 text, uses `/` as its only separator, and is always
