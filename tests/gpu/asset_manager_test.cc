@@ -1,5 +1,6 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "cpen/app/asset_roots.hh"
 #include "cpen/assets/asset_manager.hh"
 #include "cpen/assets/asset_resolver.hh"
 #include "cpen/assets/virtual_file_system.hh"
@@ -7,7 +8,7 @@
 #include "cpen/core/file_system.hh"
 #include "cpen/render/pixel_format.hh"
 #include "support/gl_fixture.hh"
-#include "support/system_font.hh"
+#include "support/engine_font.hh"
 #include "support/temporary_directory.hh"
 #include "support/test_image.hh"
 #include "support/trace.hh"
@@ -25,7 +26,7 @@ using cpen::assets::FontReference;
 using cpen::assets::TextureReference;
 using cpen::assets::VirtualFileSystem;
 using cpen::core::ErrorCode;
-using cpen::test::find_system_font;
+using cpen::test::engine_font_path;
 using cpen::test::gl_context;
 using cpen::test::TemporaryDirectory;
 using cpen::test::tiny_png_text;
@@ -103,16 +104,9 @@ TEST_CASE("a typeface loads through the asset layer, once per size",
 {
     static_cast<void>(gl_context());
 
-    const std::optional<std::filesystem::path> system_font = find_system_font();
-
-    if (!system_font.has_value())
-    {
-        SKIP("no system typeface to borrow");
-    }
-
     Game game;
 
-    const auto data = cpen::core::read_file_bytes(*system_font);
+    const auto data = cpen::core::read_file_bytes(engine_font_path());
     REQUIRE(data.has_value());
     game.directory.write("assets/fonts/ui.ttf", *data);
 
@@ -136,6 +130,39 @@ TEST_CASE("a typeface loads through the asset layer, once per size",
     CHECK_FALSE(large->handle() == small->handle());
     CHECK(game.assets.loaded_font_count() == 2);
     CHECK((*large)->pixel_size() == 48);
+}
+
+TEST_CASE("the engine's own typeface loads out of the root it ships in",
+          "[assets][manager][gpu]")
+{
+    static_cast<void>(gl_context());
+
+    const auto roots = cpen::app::default_asset_roots();
+    REQUIRE(roots.has_value());
+
+    // The real engine root beside this binary, not a temporary one: this case is
+    // the end-to-end proof that a game which ships nothing at all still has a
+    // typeface, and that the staging which puts it there works.
+    VirtualFileSystem files;
+    files.mount(roots->engine);
+
+    const AssetResolver engine_resolver(files);
+    AssetManager engine_assets(files, engine_resolver);
+
+    const auto font = engine_assets.default_font(24);
+
+    REQUIRE(font.has_value());
+    trace("the engine ships '{}'", (*font)->family_name());
+
+    CHECK((*font)->pixel_size() == 24);
+    CHECK((*font)->family_name() == "DejaVu Sans");
+
+    // Cyrillic is the reason this face was chosen over a smaller one, so it is
+    // worth an assertion rather than a comment.
+    const cpen::render::Glyph* cyrillic = (*font)->glyph(U'Я');
+
+    REQUIRE(cyrillic != nullptr);
+    CHECK(cyrillic->advance > 0.0f);
 }
 
 TEST_CASE("a file that is not a typeface fails as one", "[assets][manager][gpu]")

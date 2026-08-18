@@ -24,6 +24,15 @@ namespace cpen::assets
     using TextureReference = AssetReference<render::Texture>;
     using FontReference = AssetReference<render::Font>;
 
+    /// The identifier of the typeface the engine ships.
+    ///
+    /// A game replaces it by shipping a file of its own at
+    /// "assets/fonts/default.ttf": the game's root is mounted first, so nothing
+    /// has to be registered or configured for its file to win. That is also why
+    /// the engine's copy is called this rather than "dejavu-sans" — the name is
+    /// the role, not the typeface.
+    inline constexpr std::string_view DEFAULT_FONT_IDENTIFIER = "default";
+
     /// An asset that was asked for and could not be had.
     struct MissingAsset
     {
@@ -82,6 +91,17 @@ namespace cpen::assets
         /// rather than a parameter to drawing.
         std::expected<FontReference, core::Error> font(std::string_view identifier,
                                                        std::uint32_t pixel_size);
+
+        /// The typeface the engine guarantees, at `pixel_size`.
+        ///
+        /// What the engine's own text is drawn with, and what a game can fall back
+        /// to before it has chosen a typeface of its own. It is an ordinary asset
+        /// under an ordinary identifier — nothing about it is special except that
+        /// the engine ships one, so it is there even in a game that ships nothing.
+        std::expected<FontReference, core::Error> default_font(std::uint32_t pixel_size)
+        {
+            return this->font(DEFAULT_FONT_IDENTIFIER, pixel_size);
+        }
 
         /// The picture to draw where an asset is missing, or nullptr if even this
         /// could not be created — which means there is no GL context, and the

@@ -4,7 +4,7 @@
 #include "cpen/render/pixel_format.hh"
 #include "support/gl_fixture.hh"
 #include "support/log_capture.hh"
-#include "support/system_font.hh"
+#include "support/engine_font.hh"
 #include "support/trace.hh"
 
 #include <filesystem>
@@ -17,7 +17,7 @@ using cpen::render::Font;
 using cpen::render::FontConfig;
 using cpen::render::Glyph;
 using cpen::render::PixelFormat;
-using cpen::test::find_system_font;
+using cpen::test::engine_font_path;
 using cpen::test::gl_context;
 using cpen::test::LogCaptureGuard;
 using cpen::test::trace;
@@ -27,22 +27,16 @@ namespace
 {
     constexpr std::uint32_t TEST_PIXEL_SIZE = 24;
 
-    /// Loads the borrowed system typeface, or skips the case.
+    /// Loads the typeface the engine ships.
     ///
-    /// SKIP rather than FAIL: a machine with no fonts installed has not broken the
-    /// engine, and a red test there would train whoever sees it to ignore red.
+    /// Not a borrowed system font any more, and not skippable: the engine carries
+    /// its own, so a machine without one installed is no longer a machine these
+    /// cases can say nothing about. The face is known, which is what lets a case
+    /// assert about Cyrillic coverage instead of hoping for it.
     Font load_font(const std::uint32_t pixel_size = TEST_PIXEL_SIZE,
                    const FontConfig& config = {})
     {
-        const std::optional<std::filesystem::path> path = find_system_font();
-        if (!path.has_value())
-        {
-            SKIP("no system typeface was found to borrow");
-        }
-
-        trace("borrowing {}", path->string());
-
-        auto font = Font::from_file(*path, pixel_size, config);
+        auto font = Font::from_file(engine_font_path(), pixel_size, config);
         REQUIRE(font.has_value());
         return std::move(*font);
     }
@@ -229,13 +223,7 @@ TEST_CASE("a font that cannot be loaded reports why", "[render][font][gpu]")
 
     SECTION("a size of zero")
     {
-        const std::optional<std::filesystem::path> path = find_system_font();
-        if (!path.has_value())
-        {
-            SKIP("no system typeface was found to borrow");
-        }
-
-        const auto font = Font::from_file(*path, 0);
+        const auto font = Font::from_file(engine_font_path(), 0);
 
         REQUIRE_FALSE(font.has_value());
         trace("zero size: {}", font.error());

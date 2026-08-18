@@ -16,18 +16,63 @@ that asks for `fonts/ui.ttf` will change.
 
 ## Roots and shadowing
 
-The engine mounts two directories and searches them in order: the game's own
-directory first, and the engine's second.
+The engine mounts two directories and searches them in order:
 
 | Order | Root | Holds |
 |---|---|---|
 | 1 | the game directory | everything the game ships |
-| 2 | the engine directory | the defaults the engine ships |
+| 2 | the engine directory | what the engine guarantees is always there |
 
-The first hit wins, so a game that ships its own `fonts/ui.ttf` replaces the
-engine's without having to know that a default existed. There is no way to ask
-for a specific root: an asset has one name, and which file answers to it is the
-mount order's business.
+The first hit wins, so a game that ships its own `assets/fonts/default.ttf`
+replaces the engine's typeface without having to know that there was one. There
+is no way to ask for a specific root: an asset has one name, and which file
+answers to it is the mount order's business.
+
+### Where they are
+
+Both are found **beside the executable**, never relative to the working
+directory:
+
+```
+cpen_demo            the program
+game/                assets/, script/, game.toml     <- the game root
+engine/              assets/fonts/default.ttf        <- the engine root
+```
+
+The working directory is whatever the shell, the launcher, the desktop shortcut
+or the debugger happened to be in. A game that reads its files relative to it
+runs when started one way and fails when started another — and the failure looks
+like a corrupt install rather than a wrong directory. The executable's own path
+is asked of the operating system, so it is right however the program was
+started.
+
+In a build tree the same layout is produced for you: the build copies the game's
+directory and the engine's assets next to each binary it produces, test binaries
+included.
+
+### Moving them
+
+```
+cpen_demo --game /srv/novels/chapter-two
+cpen_demo --engine=/opt/cpen
+```
+
+Both spellings work. A relative path is resolved against the working directory —
+somebody typing a path means the path they can see. An option the engine does not
+recognise is ignored, because a game is entitled to its own command line; an
+override with nothing after it is refused, because the silent version of that
+typo is a game that starts on the wrong data and reports every asset missing.
+
+## What the engine ships
+
+One typeface, at `assets/fonts/default.ttf` in the engine root: a copy of DejaVu
+Sans, chosen for covering Latin, Cyrillic and Greek in one face. It is what
+`AssetManager::default_font(pixel_size)` loads, what the engine's own text is
+drawn with, and what a game can rely on before it has chosen a typeface of its
+own.
+
+To replace it, ship `assets/fonts/default.ttf` in the game root. Nothing needs to
+be registered or configured — the game's root is mounted first, so its file wins.
 
 ## Identifiers: what a game actually writes
 

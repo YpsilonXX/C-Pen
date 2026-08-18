@@ -125,17 +125,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # fonts-dejavu-core is not decoration. The font and text cases borrow a
-      # typeface from the machine and skip themselves when there is none, which is
-      # right on a developer's laptop and a trap here: without a font installed
-      # this job would go green having silently skipped every case that touches
-      # text.
+      # No font package: the engine ships its own typeface, and the build stages
+      # it beside every binary. The text cases used to borrow one from the machine
+      # and skip when there was none — which on a runner meant a green job that had
+      # silently exercised nothing. They now fail if the typeface is not there,
+      # which is the correct answer, because a missing one would mean every game
+      # built here is missing it too.
       - name: Install build and graphics dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             xorg-dev libwayland-dev libxkbcommon-dev wayland-protocols \
-            libgl1 libgl1-mesa-dri mesa-utils xvfb fonts-dejavu-core
+            libgl1 libgl1-mesa-dri mesa-utils xvfb
 
       - name: Cache fetched dependencies
         uses: actions/cache@v4

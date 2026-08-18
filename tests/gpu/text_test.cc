@@ -8,7 +8,7 @@
 #include "cpen/render/viewport.hh"
 #include "support/gl_fixture.hh"
 #include "support/render_target.hh"
-#include "support/system_font.hh"
+#include "support/engine_font.hh"
 #include "support/trace.hh"
 
 #include <glad/glad.h>
@@ -33,7 +33,7 @@ using cpen::render::Viewport;
 using cpen::render::draw_text;
 using cpen::render::measure_text;
 using cpen::render::wrap_text;
-using cpen::test::find_system_font;
+using cpen::test::engine_font_path;
 using cpen::test::gl_context;
 using cpen::test::RenderTarget;
 using cpen::test::trace;
@@ -51,13 +51,7 @@ namespace
 
     Font load_font(const std::uint32_t pixel_size = TEXT_PIXEL_SIZE)
     {
-        const std::optional<std::filesystem::path> path = find_system_font();
-        if (!path.has_value())
-        {
-            SKIP("no system typeface was found to borrow");
-        }
-
-        auto font = Font::from_file(*path, pixel_size);
+        auto font = Font::from_file(engine_font_path(), pixel_size);
         REQUIRE(font.has_value());
         return std::move(*font);
     }
