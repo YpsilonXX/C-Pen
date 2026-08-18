@@ -200,12 +200,32 @@ namespace cpen::platform
         });
     }
 
+    void Window::to_framebuffer_pixels(GLFWwindow* handle, double& x, double& y)
+    {
+        int window_width = 0;
+        int window_height = 0;
+        int buffer_width = 0;
+        int buffer_height = 0;
+
+        glfwGetWindowSize(handle, &window_width, &window_height);
+        glfwGetFramebufferSize(handle, &buffer_width, &buffer_height);
+
+        if (window_width <= 0 || window_height <= 0)
+        {
+            return;
+        }
+
+        x *= static_cast<double>(buffer_width) / static_cast<double>(window_width);
+        y *= static_cast<double>(buffer_height) / static_cast<double>(window_height);
+    }
+
     void Window::on_mouse_button(GLFWwindow* handle, const int button,
                                  const int action, const int modifiers)
     {
         double x = 0.0;
         double y = 0.0;
         glfwGetCursorPos(handle, &x, &y);
+        to_framebuffer_pixels(handle, x, y);
 
         from_handle(handle).push_event(MouseButtonEvent{
             .button = static_cast<MouseButton>(button),
@@ -218,7 +238,11 @@ namespace cpen::platform
 
     void Window::on_cursor_position(GLFWwindow* handle, const double x, const double y)
     {
-        from_handle(handle).push_event(MouseMoveEvent{.x = x, .y = y});
+        double pixel_x = x;
+        double pixel_y = y;
+        to_framebuffer_pixels(handle, pixel_x, pixel_y);
+
+        from_handle(handle).push_event(MouseMoveEvent{.x = pixel_x, .y = pixel_y});
     }
 
     void Window::on_scroll(GLFWwindow* handle, const double x_offset, const double y_offset)

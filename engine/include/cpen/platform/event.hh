@@ -32,6 +32,12 @@ namespace cpen::platform
     /// A mouse button changed state. The cursor position is captured at the
     /// moment of the event, so a click is not mis-attributed to wherever the
     /// pointer has drifted by the time the event is handled.
+    /// A press or a release, with the cursor position it happened at.
+    ///
+    /// The position is in framebuffer pixels, which is the space
+    /// render::Viewport::to_virtual() converts from: the two are stated in the
+    /// same units on purpose, so that turning a click into a place in the game
+    /// world is one call and not a conversion somebody has to remember.
     struct MouseButtonEvent
     {
         MouseButton button = MouseButton::LEFT;
@@ -42,6 +48,7 @@ namespace cpen::platform
     };
 
     /// The cursor moved. Coordinates are in window coordinates, origin top-left.
+    /// The cursor's new position, in framebuffer pixels. See MouseButtonEvent.
     struct MouseMoveEvent
     {
         double x = 0.0;
