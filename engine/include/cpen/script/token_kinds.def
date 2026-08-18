@@ -1,0 +1,98 @@
+// Every kind of token the language has, in one list.
+//
+// Included repeatedly with the two macros below defined differently each time,
+// which is what keeps the enumeration, its names, the text a diagnostic prints
+// for it and the keyword table from ever drifting apart. Adding a token is one
+// line here and nothing else; the alternative — an enum in one place, a switch
+// returning names in another, a keyword table in a third — is the standard way
+// a compiler front end acquires a token that prints as "unknown".
+//
+//   CPEN_TOKEN_KIND(name, description)
+//       name        the enumerator, and what a token dump prints
+//       description how the token is named in a diagnostic ("expected ':'")
+//
+//   CPEN_KEYWORD(name, text)
+//       text        the exact source spelling that produces this token
+//
+// An includer that only defines CPEN_TOKEN_KIND sees keywords as ordinary token
+// kinds; one that only defines CPEN_KEYWORD sees nothing else. Both macros are
+// undefined again at the end, so no includer has to clean up after itself.
+//
+// Deliberately not sorted for lookup: the keyword table is searched linearly.
+// Perfect hashing a list of eighteen words that is expected to keep changing
+// buys nothing measurable and makes changing it a chore.
+
+#ifndef CPEN_TOKEN_KIND
+#define CPEN_TOKEN_KIND(name, description)
+#endif
+
+#ifndef CPEN_KEYWORD
+#define CPEN_KEYWORD(name, text) CPEN_TOKEN_KIND(name, "'" text "'")
+#endif
+
+// --- Structure -------------------------------------------------------------
+//
+// INDENT and DEDENT are what significant indentation costs: the lexer, not the
+// parser, decides where a block opens and closes, and emits a token for it.
+// Both are zero-length and sit at the first real character of their line.
+
+CPEN_TOKEN_KIND(END_OF_FILE,       "end of file")
+CPEN_TOKEN_KIND(NEWLINE,           "end of line")
+CPEN_TOKEN_KIND(INDENT,            "indent")
+CPEN_TOKEN_KIND(DEDENT,            "dedent")
+
+// --- Names and literals ----------------------------------------------------
+
+CPEN_TOKEN_KIND(IDENTIFIER,        "identifier")
+CPEN_TOKEN_KIND(INTEGER,           "integer literal")
+CPEN_TOKEN_KIND(FLOATING,          "floating-point literal")
+CPEN_TOKEN_KIND(TEXT,              "text literal")
+
+// --- Punctuation and operators ---------------------------------------------
+
+CPEN_TOKEN_KIND(DOLLAR,            "'$'")
+CPEN_TOKEN_KIND(COLON,             "':'")
+CPEN_TOKEN_KIND(COMMA,             "','")
+CPEN_TOKEN_KIND(LEFT_PARENTHESIS,  "'('")
+CPEN_TOKEN_KIND(RIGHT_PARENTHESIS, "')'")
+CPEN_TOKEN_KIND(PLUS,              "'+'")
+CPEN_TOKEN_KIND(MINUS,             "'-'")
+CPEN_TOKEN_KIND(STAR,              "'*'")
+CPEN_TOKEN_KIND(SLASH,             "'/'")
+CPEN_TOKEN_KIND(PERCENT,           "'%'")
+CPEN_TOKEN_KIND(EQUAL,             "'='")
+CPEN_TOKEN_KIND(EQUAL_EQUAL,       "'=='")
+CPEN_TOKEN_KIND(NOT_EQUAL,         "'!='")
+CPEN_TOKEN_KIND(LESS,              "'<'")
+CPEN_TOKEN_KIND(LESS_EQUAL,        "'<='")
+CPEN_TOKEN_KIND(GREATER,           "'>'")
+CPEN_TOKEN_KIND(GREATER_EQUAL,     "'>='")
+
+// --- Keywords --------------------------------------------------------------
+//
+// TRUE, FALSE and NIL carry a _LITERAL suffix because <windef.h> defines TRUE
+// and FALSE as macros, and an enumerator by those names would stop compiling in
+// any translation unit that reached a Windows header first. The same trap as the
+// ERROR macro documented in core/log.hh, avoided rather than worked around.
+
+CPEN_KEYWORD(LABEL,                "label")
+CPEN_KEYWORD(JUMP,                 "jump")
+CPEN_KEYWORD(SCENE,                "scene")
+CPEN_KEYWORD(SHOW,                 "show")
+CPEN_KEYWORD(HIDE,                 "hide")
+CPEN_KEYWORD(MENU,                 "menu")
+CPEN_KEYWORD(IF,                   "if")
+CPEN_KEYWORD(ELIF,                 "elif")
+CPEN_KEYWORD(ELSE,                 "else")
+CPEN_KEYWORD(PAUSE,                "pause")
+CPEN_KEYWORD(AT,                   "at")
+CPEN_KEYWORD(WITH,                 "with")
+CPEN_KEYWORD(AND,                  "and")
+CPEN_KEYWORD(OR,                   "or")
+CPEN_KEYWORD(NOT,                  "not")
+CPEN_KEYWORD(TRUE_LITERAL,         "true")
+CPEN_KEYWORD(FALSE_LITERAL,        "false")
+CPEN_KEYWORD(NIL_LITERAL,          "nil")
+
+#undef CPEN_TOKEN_KIND
+#undef CPEN_KEYWORD
