@@ -1,6 +1,11 @@
 #ifndef CPEN_RUNTIME_GAME_CONTEXT_HH
 #define CPEN_RUNTIME_GAME_CONTEXT_HH
 
+namespace cpen::assets
+{
+    class AssetManager;
+}
+
 namespace cpen::core
 {
     class Blackboard;
@@ -40,8 +45,16 @@ namespace cpen::runtime
         /// that once, either side of the whole render pass.
         render::Renderer& renderer;
 
-        // Extended as the layers below appear: asset manager (F1), presentation
-        // (F2-F3), audio (F5).
+        /// Everything the game's own files are reached through: identifiers in,
+        /// pictures and typefaces out. A state never opens a file, never learns
+        /// where the game was installed, and never sees a path.
+        ///
+        /// Non-const, because loading changes what is cached — and because a state
+        /// that could not load anything would have to be handed its assets by
+        /// somebody who could.
+        assets::AssetManager& assets;
+
+        // Extended as the layers below appear: presentation (F3), audio (F5).
     };
 }
 

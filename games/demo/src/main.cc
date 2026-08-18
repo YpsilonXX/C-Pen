@@ -1,4 +1,6 @@
 #include <cpen/app/application.hh>
+#include <cpen/app/asset_roots.hh>
+#include <cpen/assets/asset_manager.hh>
 #include <cpen/core/error.hh>
 #include <cpen/core/log.hh>
 #include <cpen/render/font.hh>
@@ -18,7 +20,6 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <filesystem>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -118,93 +119,19 @@ namespace
     constexpr std::string_view CRISP_LABEL = "8x8, nearest, край непрозрачный";
     constexpr std::string_view SMOOTH_LABEL = "128x128, linear, кайма прозрачная";
 
-    /// Finds a typeface installed on the machine.
+    /// The identifier of the demo's one loaded picture.
     ///
-    /// TODO(F2): the engine has to ship a typeface of its own — a game cannot
-    /// assume the player has one — but that belongs with the asset layer, together
-    /// with everything else that needs a path to come from somewhere honest.
-    /// Borrowing one keeps the repository free of binary fixtures until then, at
-    /// the price of a demo that says so and carries on without text if there is
-    /// nothing to borrow.
-    std::optional<std::filesystem::path> find_system_font()
-    {
-        constexpr std::array<const char*, 6> CANDIDATES = {
-            "/usr/share/fonts/TTF/DejaVuSans.ttf",
-            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-            "/usr/share/fonts/liberation/LiberationSans-Regular.ttf",
-            "/usr/share/fonts/noto/NotoSans-Regular.ttf",
-            "C:/Windows/Fonts/segoeui.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        };
-
-        for (const char* const candidate : CANDIDATES)
-        {
-            std::error_code error;
-            if (std::filesystem::exists(candidate, error))
-            {
-                return std::filesystem::path{candidate};
-            }
-        }
-
-        return std::nullopt;
-    }
-
-    /// Side of the smooth checkerboard, in texels, and the size of one of its
-    /// cells. Large enough that one texel covers about three screen pixels at the
-    /// size it is drawn, which is the range where linear filtering smooths an edge
-    /// without softening the pattern.
-    constexpr std::uint32_t SOFT_CHECKERBOARD_SIZE = 128;
-    constexpr std::uint32_t SOFT_CHECKERBOARD_CELL = 16;
-
-    /// The same pattern as the small checkerboard, drawn the way a real asset is.
+    /// A logical name, not a path: the engine turns it into
+    /// "assets/sprites/checker_soft.png" under the game's root by convention, and
+    /// nothing here knows or can know where that root is.
     ///
-    /// Two differences, and both matter for the edges. It is large enough to be
-    /// magnified only a little, so linear filtering blends across a few pixels
-    /// rather than across a whole cell. And its outermost ring of texels is
-    /// transparent, so the sprite's silhouette is decided by the alpha channel
-    /// instead of by the edge of the quad — which is what a cut-out character is,
-    /// and why no amount of multisampling would be needed to draw one smoothly.
-    ///
-    /// The transparent ring is written with the colour of the texel beside it,
-    /// which no longer matters and is left as a demonstration that it does not:
-    /// the pixels are premultiplied on the way to the GPU, so every fully
-    /// transparent texel becomes zero whatever colour it was written with, and
-    /// linear filtering interpolates colour and alpha in the same space. Before
-    /// that, a ring left black darkened the colour as the alpha fell and every
-    /// sprite came out with a dirty outline.
-    std::vector<std::byte> generate_soft_checkerboard()
-    {
-        constexpr std::array<std::uint8_t, 3> LIGHT = {230, 220, 200};
-        constexpr std::array<std::uint8_t, 3> DARK = {60, 70, 110};
-
-        std::vector<std::byte> pixels(
-            render::image_size_in_bytes(SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE,
-                                        render::PixelFormat::RGBA8));
-
-        std::size_t offset = 0;
-        for (std::uint32_t row = 0; row < SOFT_CHECKERBOARD_SIZE; ++row)
-        {
-            for (std::uint32_t column = 0; column < SOFT_CHECKERBOARD_SIZE; ++column)
-            {
-                const bool is_light =
-                    ((row / SOFT_CHECKERBOARD_CELL) + (column / SOFT_CHECKERBOARD_CELL)) % 2 == 0;
-
-                const bool is_border = row == 0 || column == 0 ||
-                                       row == SOFT_CHECKERBOARD_SIZE - 1 ||
-                                       column == SOFT_CHECKERBOARD_SIZE - 1;
-
-                const std::array<std::uint8_t, 3>& color = is_light ? LIGHT : DARK;
-
-                for (const std::uint8_t channel : color)
-                {
-                    pixels[offset++] = static_cast<std::byte>(channel);
-                }
-                pixels[offset++] = static_cast<std::byte>(is_border ? 0 : 255);
-            }
-        }
-
-        return pixels;
-    }
+    /// The file is the same pattern as the generated checkerboard, drawn the way a
+    /// real asset is: large enough to filter, and with a fully transparent border
+    /// so the silhouette comes from the alpha channel rather than from the edge of
+    /// the quad. Its transparent texels carry black, exactly as an image editor
+    /// exports them — which is what used to produce a dark halo, and what the
+    /// premultiplication on load now removes.
+    constexpr std::string_view SOFT_SPRITE = "checker_soft";
 
     /// F1 smoke test: an otherwise empty state that clears the window, draws a few
     /// sprites through the batch and quits on Escape. Its purposes are to prove
@@ -241,7 +168,10 @@ namespace
         {
             this->body_font.reset();
             this->title_font.reset();
+
+            this->soft_drawable = nullptr;
             this->soft_texture.reset();
+
             this->texture.reset();
         }
 
@@ -307,9 +237,9 @@ namespace
             // Drawn first, and from the other texture, so that the two textures
             // make two runs rather than three: the batch never reorders what it is
             // given, so grouping is the caller's to arrange.
-            if (this->soft_texture.has_value())
+            if (this->soft_drawable != nullptr)
             {
-                batch->draw(*this->soft_texture, render::Sprite{
+                batch->draw(*this->soft_drawable, render::Sprite{
                                                            .position = {960.0f, 540.0f},
                                                            .size = {420.0f, 420.0f},
                                                            .origin = {0.5f, 0.5f},
@@ -367,7 +297,7 @@ namespace
         /// second shader, it is sprites against a different texture.
         void draw_text_block(render::SpriteBatch& batch)
         {
-            if (!this->title_font.has_value() || !this->body_font.has_value())
+            if (!this->title_font || !this->body_font)
             {
                 return;
             }
@@ -399,7 +329,7 @@ namespace
             this->draw_centred(batch, *this->body_font, CRISP_LABEL, glm::vec2{200.0f, 360.0f},
                                LABEL_COLOR);
 
-            if (this->soft_texture.has_value())
+            if (this->soft_drawable != nullptr)
             {
                 this->draw_centred(batch, *this->body_font, SMOOTH_LABEL, glm::vec2{960.0f, 800.0f},
                                    LABEL_COLOR);
@@ -439,18 +369,25 @@ namespace
 
             this->texture = std::move(*created_texture);
 
-            // Linear filtering this time, and no override of the default: a texture
-            // large enough not to be magnified far is what LINEAR is the right
-            // answer for, and TextureConfig already says so by defaulting to it.
-            auto created_soft = make_texture(generate_soft_checkerboard(),
-                                             SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE);
-            if (!created_soft)
+            // The other picture is not made here at all: it is a file in the
+            // game's directory, asked for by name. Everything between the name and
+            // the texture — finding the root, resolving the extension, reading the
+            // bytes, decoding them, premultiplying the alpha, uploading — belongs
+            // to the asset layer, and none of it is visible from here.
+            assets::AssetManager& asset_manager = this->context().assets;
+
+            if (auto loaded = asset_manager.texture(assets::AssetKind::SPRITE, SOFT_SPRITE))
             {
-                log::error(log::Category::RENDER, "{}", created_soft.error());
+                this->soft_texture = std::move(*loaded);
+                this->soft_drawable = this->soft_texture.get();
             }
             else
             {
-                this->soft_texture = std::move(*created_soft);
+                // What the presentation layer will do for every missing asset, in
+                // miniature: the manager reports the failure and offers something
+                // to draw, and the decision to draw it belongs here, where it is
+                // known that there is a screen and something has to be on it.
+                this->soft_drawable = asset_manager.placeholder_texture();
             }
 
             this->load_fonts();
@@ -460,18 +397,19 @@ namespace
                       this->context().renderer.can_draw() ? "enabled" : "unavailable");
         }
 
+        /// Two sizes of the typeface the engine ships.
+        ///
+        /// No path, no fallback search, and no case where the demo runs without
+        /// text: a game that ships no typeface of its own still has this one,
+        /// because the engine's root is mounted underneath the game's. A game that
+        /// wants its own puts a file at "assets/fonts/default.ttf" and this code
+        /// does not change.
         void load_fonts()
         {
-            const std::optional<std::filesystem::path> path = find_system_font();
-            if (!path.has_value())
-            {
-                log::warn(log::Category::RENDER,
-                          "no typeface was found to borrow; the demo runs without text");
-                return;
-            }
+            assets::AssetManager& asset_manager = this->context().assets;
 
-            auto title = render::Font::from_file(*path, TITLE_PIXEL_SIZE);
-            auto body = render::Font::from_file(*path, BODY_PIXEL_SIZE);
+            auto title = asset_manager.default_font(TITLE_PIXEL_SIZE);
+            auto body = asset_manager.default_font(BODY_PIXEL_SIZE);
 
             if (!title || !body)
             {
@@ -484,19 +422,29 @@ namespace
             this->body_font = std::move(*body);
         }
 
+        /// The one texture this state still builds itself, because it needs
+        /// nearest-neighbour filtering and the asset layer has nowhere to be told
+        /// that yet: how a picture is filtered is a property of the asset, and the
+        /// manifest that will carry it does not exist. A texture that wants
+        /// anything but the default is made by hand until it does.
         std::optional<render::Texture> texture;
 
-        /// The same pattern drawn the way an asset is: large enough to filter, with
-        /// a transparent ring so the silhouette comes from the alpha channel.
-        std::optional<render::Texture> soft_texture;
+        /// A reference to an asset the manager owns, not the asset itself. Dropping
+        /// it gives up a claim on the picture; it does not unload it, and it cannot
+        /// outlive the manager, which the Application destroys before the window.
+        assets::TextureReference soft_texture;
+
+        /// What to draw for it: the loaded picture, or the manager's placeholder if
+        /// there was none. Kept as a pointer because those two are owned by
+        /// different things and only one of them is an asset.
+        const render::Texture* soft_drawable = nullptr;
 
         // Two sizes of one typeface, which the engine treats exactly as two
         // different typefaces would be treated: each owns its atlas, and drawing
-        // with both splits the batch the same way two pictures would. Held as
-        // separate objects rather than selected by a parameter, so that changing
-        // the font at runtime is a matter of passing a different one.
-        std::optional<render::Font> title_font;
-        std::optional<render::Font> body_font;
+        // with both splits the batch the same way two pictures would. The size is
+        // part of the manager's key for the same reason.
+        assets::FontReference title_font;
+        assets::FontReference body_font;
 
         // Declared after the texture, and so destroyed before it. Nothing here
         // requires that order today — the batch holds no reference to the texture
@@ -511,12 +459,32 @@ namespace
 }
 
 /// Entry point for the C-Pen demo game executable.
-int main()
+///
+/// The command line is read for one reason: to say where the game's files are.
+/// Without it they are the ones beside this executable, which is what a player
+/// gets; with `--game <path>` the same binary runs a different game directory,
+/// which is what an author editing one wants.
+int main(const int argument_count, const char* const* const arguments)
 {
     log::initialize_console();
     log::info(log::Category::APP, "C-Pen demo starting");
 
-    app::Application application;
+    auto roots = app::asset_roots_from_command_line(argument_count, arguments);
+
+    if (!roots)
+    {
+        // Fatal, unlike almost everything else here. Every other failure leaves a
+        // window up with a diagnostic in it; this one means the player asked for a
+        // directory and did not say which, and starting on the wrong one would
+        // report every asset in the game as missing.
+        log::error(log::Category::APP, "{}", roots.error());
+        return 1;
+    }
+
+    app::Application::Config configuration;
+    configuration.roots = std::move(*roots);
+
+    app::Application application{std::move(configuration)};
     application.states().push(std::make_unique<DemoState>());
     application.run();
 
