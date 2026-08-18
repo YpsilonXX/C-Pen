@@ -28,6 +28,7 @@ namespace cpen::log
         {
         case Category::CORE:     return "core";
         case Category::PLATFORM: return "platform";
+        case Category::ASSETS:   return "assets";
         case Category::RENDER:   return "render";
         case Category::PRESENT:  return "present";
         case Category::SCRIPT:   return "script";
