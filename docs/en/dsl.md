@@ -376,7 +376,8 @@ immediate.
 
 The language does not check which anchors and which transitions exist: those are
 the engine's vocabulary, not the language's, and a script does not have to be
-re-approved every time one is added.
+re-approved every time one is added. Which places and which transitions this
+engine knows, and what it does with them, is in [stage.md](stage.md).
 
 None of the three waits. A transition takes time on screen, but the story goes on
 over it — which is what a novel does, and what the next line expects.

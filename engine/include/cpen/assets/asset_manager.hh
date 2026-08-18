@@ -7,6 +7,7 @@
 #include "cpen/render/font.hh"
 #include "cpen/render/image.hh"
 #include "cpen/render/texture.hh"
+#include "cpen/script/script.hh"
 
 #include <cstdint>
 #include <expected>
@@ -23,6 +24,17 @@ namespace cpen::assets
     using ImageReference = AssetReference<render::Image>;
     using TextureReference = AssetReference<render::Texture>;
     using FontReference = AssetReference<render::Font>;
+
+    /// A compiled script, held by the same store as everything else the game's
+    /// files turn into.
+    ///
+    /// Compilation belongs here for the reason decoding a PNG does: a game state
+    /// asks for a name and is handed something it can use, and the steps between
+    /// the two — finding the root, resolving the extension, reading the text,
+    /// compiling it — are the asset layer's business. Caching follows for free,
+    /// which matters more here than for a picture: a script called from two
+    /// places is compiled once.
+    using ScriptReference = AssetReference<script::Script>;
 
     /// The identifier of the typeface the engine ships.
     ///
@@ -92,6 +104,14 @@ namespace cpen::assets
         std::expected<FontReference, core::Error> font(std::string_view identifier,
                                                        std::uint32_t pixel_size);
 
+        /// Reads and compiles a script.
+        ///
+        /// A compiler diagnostic list is rendered into the error's message, whole
+        /// and multi-line, rather than reduced to the first complaint: a script
+        /// with three mistakes in it should report three, and the caller here has
+        /// no way to ask for the rest.
+        std::expected<ScriptReference, core::Error> script(std::string_view identifier);
+
         /// The typeface the engine guarantees, at `pixel_size`.
         ///
         /// What the engine's own text is drawn with, and what a game can fall back
@@ -129,6 +149,7 @@ namespace cpen::assets
         std::size_t loaded_image_count() const noexcept { return this->images.loaded_count(); }
         std::size_t loaded_texture_count() const noexcept { return this->textures.loaded_count(); }
         std::size_t loaded_font_count() const noexcept { return this->fonts.loaded_count(); }
+        std::size_t loaded_script_count() const noexcept { return this->scripts.loaded_count(); }
 
     private:
         /// Records and logs a failure, once per identifier, and hands the error
@@ -142,6 +163,7 @@ namespace cpen::assets
         AssetStore<render::Image> images;
         AssetStore<render::Texture> textures;
         AssetStore<render::Font> fonts;
+        AssetStore<script::Script> scripts;
 
         std::optional<render::Texture> placeholder;
         bool placeholder_failed = false;

@@ -52,6 +52,11 @@ target_link_libraries(cpen
     PRIVATE
         cpen_warnings
         cpen_sanitizers
+
+        # PRIVATE, unlike every other dependency here: toml.hpp is included by
+        # one source file and by no public header, so nothing that links the
+        # engine has to see it — or has to be recompiled when it is bumped.
+        tomlplusplus
     PUBLIC
         glfw
         glm::glm

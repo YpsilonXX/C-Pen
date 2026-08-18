@@ -39,6 +39,8 @@ game/                assets/, script/, game.toml     <- the game root
 engine/              assets/fonts/default.ttf        <- the engine root
 ```
 
+`game.toml` is the game's manifest — see [manifest.md](manifest.md).
+
 The working directory is whatever the shell, the launcher, the desktop shortcut
 or the debugger happened to be in. A game that reads its files relative to it
 runs when started one way and fails when started another — and the failure looks

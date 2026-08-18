@@ -1,0 +1,77 @@
+# The C-Pen demo.
+#
+# Everything the language can say today appears somewhere below, so that running
+# this file is a test of the whole engine and not only of the parts a short scene
+# happens to touch.
+
+label start:
+	scene room with fade
+	pause 0.4
+
+	"В комнате пусто. За окном стоит луна и, кажется, никуда не собирается."
+
+	show alice happy at left with dissolve
+	alice "Привет! Так ты и есть тот самый движок?"
+
+	$ sympathy = 0
+
+	show bob idle at right
+	bob "Он ещё и рисовать умеет. Смотри — нас двое, и мы не мешаем друг другу."
+
+	"Алиса посмотрела на Боба так, как смотрят на человека, испортившего сюрприз."
+
+	show alice sad at left
+	alice "Я, между прочим, готовилась."
+
+	menu:
+		"Сказать, что она отлично выглядит":
+			$ sympathy = sympathy + 2
+			show alice happy at left
+			alice "Ну вот! Хоть кто-то заметил."
+		"Спросить, кто писал этот скрипт":
+			$ sympathy = sympathy + 1
+			alice "Кто-то, кому очень хотелось проверить меню."
+		"Промолчать":
+			show bob cross at right
+			bob "..."
+			"Пауза вышла длиннее, чем кто-либо рассчитывал."
+
+	call the_clock_strikes
+
+	if sympathy > 1:
+		alice "Знаешь, с тобой не так уж плохо."
+	elif sympathy > 0:
+		alice "Ладно, засчитано."
+	else:
+		alice "Я запомню."
+
+	"Симпатия: /{sympathy}."
+
+	hide bob with dissolve
+	alice "Он всегда так уходит. Пойдём и мы."
+
+	hide alice
+	jump the_street
+
+label the_street:
+	scene street with fade
+	pause 0.5
+
+	"На улице холодно и светло — из-за окон, которых больше, чем звёзд."
+
+	show alice happy at center
+	alice "Вот, собственно, и всё, что движок пока умеет сказать."
+
+	call the_clock_strikes
+
+	alice "Дальше будут переходы, звук и сохранения. Но это уже другая история."
+
+	hide alice with dissolve
+	"Конец демонстрации."
+
+# Entered from two places, and neither of them has to know about the other: this
+# is what `call` is for.
+label the_clock_strikes:
+	pause 0.3
+	"Где-то далеко пробили часы."
+	pause 0.3

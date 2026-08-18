@@ -118,6 +118,18 @@ namespace cpen::platform
         static Window& from_handle(GLFWwindow* handle);
         static void on_key(GLFWwindow* handle, int key, int scancode, int action, int modifiers);
         static void on_text(GLFWwindow* handle, unsigned int codepoint);
+        /// Converts a cursor position from the screen coordinates the operating
+        /// system reports into the framebuffer pixels everything above this layer
+        /// works in.
+        ///
+        /// The two differ by the display's scaling factor, which is 1 on an
+        /// ordinary monitor and anything at all on a high-DPI one. Converting
+        /// here rather than in each reader is what keeps a single coordinate
+        /// space in the engine: a click and the viewport that has to interpret it
+        /// are then measured in the same units, and a menu hit test cannot
+        /// quietly answer the wrong question on somebody else's screen.
+        static void to_framebuffer_pixels(GLFWwindow* handle, double& x, double& y);
+
         static void on_mouse_button(GLFWwindow* handle, int button, int action, int modifiers);
         static void on_cursor_position(GLFWwindow* handle, double x, double y);
         static void on_scroll(GLFWwindow* handle, double x_offset, double y_offset);

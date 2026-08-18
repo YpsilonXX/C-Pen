@@ -1,11 +1,20 @@
 # Vendoring external/
 
-Three components are vendored by hand (not fetched via CMake FetchContent) per the locked architecture: `glad/` (generated), `stb/stb_image.h`, `miniaudio/miniaudio.h`. Already fetched and committed — this file documents how, for re-vendoring later (e.g. bumping stb_image, regenerating glad for a different GL API/extension set).
+Four components are vendored by hand (not fetched via CMake FetchContent): `glad/` (generated), `stb/stb_image.h`, `miniaudio/miniaudio.h`, `tomlplusplus/toml.hpp`. The first three are per the locked architecture; toml++ was added with the game manifest, by the same rule — a single header with its licence inside it is cheaper to vendor than to fetch. Already fetched and committed — this file documents how, for re-vendoring later (e.g. bumping stb_image, regenerating glad for a different GL API/extension set).
 
 ## stb_image.h
 
 ```bash
 curl -L -o external/stb/stb_image.h https://raw.githubusercontent.com/nothings/stb/master/stb_image.h
+```
+
+## toml.hpp
+
+Single-header build of toml++ (currently v3.4.0, MIT, licence text at the top of
+the file).
+
+```bash
+curl -L -o external/tomlplusplus/toml.hpp https://raw.githubusercontent.com/marzer/tomlplusplus/master/toml.hpp
 ```
 
 ## miniaudio.h
