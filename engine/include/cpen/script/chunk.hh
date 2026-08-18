@@ -35,6 +35,9 @@ namespace cpen::script
 
         /// An index into the chunk's menu tables.
         MENU_TABLE,
+
+        /// An index into the chunk's presentation commands.
+        COMMAND,
     };
 
     enum class OpCode : std::uint8_t
@@ -62,6 +65,33 @@ namespace cpen::script
 
     /// Bytes one whole instruction occupies: the opcode and its operands.
     std::size_t instruction_size(OpCode instruction) noexcept;
+
+    /// The static half of one presentation instruction.
+    ///
+    /// Everything a `scene`, `show` or `hide` says that is known while compiling
+    /// lives here, and the machine copies it into the command the sink receives.
+    /// Only a position given as coordinates is missing from it, because that is
+    /// computed; the flag says so and the values arrive on the stack.
+    ///
+    /// One record type for all three instructions rather than three: they differ
+    /// in which fields they use, not in shape, and a single table keeps the
+    /// operand kind — and the disassembler — down to one case. A property added
+    /// in a later phase (a transition's duration, a layer) is a field here and
+    /// changes no instruction encoding at all.
+    struct PresentationRecord
+    {
+        /// The background for a scene, the sprite for a show or a hide.
+        std::string target{};
+
+        /// A named anchor, empty when there is none.
+        std::string anchor{};
+
+        /// A transition name, empty for an immediate change.
+        std::string transition{};
+
+        /// Whether two coordinates are waiting on the stack, deepest first.
+        bool position_on_stack = false;
+    };
 
     /// Where each choice of a menu continues.
     ///
@@ -98,6 +128,7 @@ namespace cpen::script
         const std::vector<core::Value>& constants() const noexcept { return this->constant_pool; }
         const std::vector<std::string>& globals() const noexcept { return this->global_names; }
         const std::vector<MenuTable>& menu_tables() const noexcept { return this->menus; }
+        const std::vector<PresentationRecord>& commands() const noexcept { return this->records; }
         const std::unordered_map<std::string, std::uint32_t>& labels() const noexcept
         {
             return this->label_addresses;
@@ -137,6 +168,13 @@ namespace cpen::script
         std::uint32_t add_global(std::string_view name);
         std::uint32_t add_menu_table(MenuTable table);
 
+        /// Fills in a table reserved earlier. A menu's instruction is emitted
+        /// before the blocks its choices lead to exist, so its targets are known
+        /// only once they have been compiled.
+        void set_menu_table(std::uint32_t index, MenuTable table);
+
+        std::uint32_t add_command(PresentationRecord record);
+
         /// Records where a label begins. Returns false if the name is already
         /// taken, which is the caller's cue to report a duplicate.
         bool add_label(std::string name, std::uint32_t address);
@@ -154,6 +192,7 @@ namespace cpen::script
         std::vector<core::Value> constant_pool{};
         std::vector<std::string> global_names{};
         std::vector<MenuTable> menus{};
+        std::vector<PresentationRecord> records{};
         std::unordered_map<std::string, std::uint32_t> label_addresses{};
 
         /// One entry per instruction, in increasing offset order, so a lookup is

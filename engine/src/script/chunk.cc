@@ -223,6 +223,22 @@ namespace cpen::script
         return static_cast<std::uint32_t>(this->menus.size() - 1);
     }
 
+    void Chunk::set_menu_table(const std::uint32_t index, MenuTable table)
+    {
+        if (index >= this->menus.size())
+        {
+            throw std::out_of_range("script: no such menu table");
+        }
+
+        this->menus[index] = std::move(table);
+    }
+
+    std::uint32_t Chunk::add_command(PresentationRecord record)
+    {
+        this->records.push_back(std::move(record));
+        return static_cast<std::uint32_t>(this->records.size() - 1);
+    }
+
     bool Chunk::add_label(std::string name, const std::uint32_t address)
     {
         return this->label_addresses.emplace(std::move(name), address).second;
@@ -279,6 +295,36 @@ namespace cpen::script
                     for (const std::uint32_t target : chunk.menu_tables()[value].targets)
                     {
                         operands += std::format(" -> {:04x}", target);
+                    }
+
+                    break;
+                }
+
+                case OperandKind::COMMAND:
+                {
+                    operands += std::format("{}  ;", value);
+
+                    if (value >= chunk.commands().size())
+                    {
+                        operands += " <no such command>";
+                        break;
+                    }
+
+                    const PresentationRecord& record = chunk.commands()[value];
+                    operands += std::format(" {}", record.target);
+
+                    if (!record.anchor.empty())
+                    {
+                        operands += std::format(" at {}", record.anchor);
+                    }
+                    else if (record.position_on_stack)
+                    {
+                        operands += " at the position on the stack";
+                    }
+
+                    if (!record.transition.empty())
+                    {
+                        operands += std::format(" with {}", record.transition);
                     }
 
                     break;

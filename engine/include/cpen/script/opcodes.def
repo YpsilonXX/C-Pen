@@ -22,10 +22,6 @@
 //
 // Deliberately absent, and not to be added on speculation:
 //
-//   - SCENE, SHOW, HIDE. Their static parts (asset name, anchor, transition) are
-//     constants, but a coordinate position is computed at run time, so their
-//     arity is a decision about the command interface rather than about the
-//     machine. Settled when the compiler and ICommandSink are designed together.
 //   - Anything to do with functions proper -- passing arguments, addressing local
 //     variables, returning a value. CALL and RETURN below are subroutine calls
 //     and nothing more; v0 has no way to declare a function, so there is nothing
@@ -127,6 +123,20 @@ CPEN_OPCODE(PAUSE,             NONE,       NONE, "pops a duration and waits that
 /// Pops one prompt per choice, in the order the choices are written, and offers
 /// them. The menu table holds the address each choice continues at.
 CPEN_OPCODE(MENU,              MENU_TABLE, NONE, "offers a choice and waits for the player")
+
+/// Change the background, put a sprite on screen, take one off.
+///
+/// The operand names a record in the chunk holding everything the script said
+/// that was known while compiling. A position written as coordinates is the one
+/// part that is not: it is computed, so the record says so and the two numbers
+/// arrive on the stack, deepest first.
+///
+/// None of the three suspends. A transition takes time on screen, but the story
+/// does not wait for it -- the next line is said over it, which is what every
+/// novel does and what an author expects.
+CPEN_OPCODE(SCENE,             COMMAND,    NONE, "changes the background")
+CPEN_OPCODE(SHOW,              COMMAND,    NONE, "puts a sprite on screen")
+CPEN_OPCODE(HIDE,              COMMAND,    NONE, "takes a sprite off screen")
 
 CPEN_OPCODE(HALT,              NONE,       NONE, "ends execution")
 
