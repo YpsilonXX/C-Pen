@@ -1,0 +1,117 @@
+// Every instruction the virtual machine has, with the shape of its operands.
+//
+//   CPEN_OPCODE(name, first, second, description)
+//
+//       name        the enumerator, and what a disassembly prints
+//       first       the kind of the first operand, or NONE
+//       second      the kind of the second operand, or NONE
+//       description one line on what the instruction does, for the reader
+//
+// The operand kinds are what makes the disassembler generic: it never learns
+// about an individual instruction, it reads this table and renders each operand
+// according to its kind. An instruction added here is disassembled correctly
+// before a line of code is written for it — only the machine's own switch has to
+// grow a case, which is exactly the place where forgetting one should be a
+// compile error.
+//
+// Encoding: one byte of opcode followed by one little-endian 32-bit word per
+// operand. Fixed-width operands rather than a compact variable encoding, because
+// the whole bytecode of a novel is measured in kilobytes and because every
+// consumer — the machine, the disassembler, the eventual save file — gets to
+// compute an instruction's length from this table alone.
+//
+// Deliberately absent, and not to be added on speculation:
+//
+//   - SCENE, SHOW, HIDE. Their static parts (asset name, anchor, transition) are
+//     constants, but a coordinate position is computed at run time, so their
+//     arity is a decision about the command interface rather than about the
+//     machine. Settled when the compiler and ICommandSink are designed together.
+//   - CALL and RETURN. The call-frame model is part of the design, but v0 has no
+//     way to declare a function, so there is nothing that could emit them and
+//     nothing that could test them.
+
+#ifndef CPEN_OPCODE
+#define CPEN_OPCODE(name, first, second, description)
+#endif
+
+// --- Values on the stack ----------------------------------------------------
+
+CPEN_OPCODE(PUSH_CONSTANT,     CONSTANT,   NONE, "pushes the constant")
+CPEN_OPCODE(PUSH_NIL,          NONE,       NONE, "pushes nil")
+CPEN_OPCODE(PUSH_TRUE,         NONE,       NONE, "pushes true")
+CPEN_OPCODE(PUSH_FALSE,        NONE,       NONE, "pushes false")
+CPEN_OPCODE(POP,               NONE,       NONE, "discards the top value")
+
+// --- Variables --------------------------------------------------------------
+//
+// Globals are named rather than numbered because they live in the blackboard,
+// which mini-games and C++ behaviours read by name as well. The operand is an
+// index into the chunk's name table, so the name is spelled once per chunk
+// instead of once per instruction.
+
+CPEN_OPCODE(LOAD_GLOBAL,       GLOBAL,     NONE, "pushes the value of the variable")
+CPEN_OPCODE(STORE_GLOBAL,      GLOBAL,     NONE, "pops a value into the variable")
+
+// --- Arithmetic and comparison ----------------------------------------------
+//
+// Polymorphic over the numeric types: integer with integer stays integer, a
+// mixed pair promotes to floating point. Deliberately not one typed instruction
+// per pair, which would need the compiler to know the type of every expression.
+
+CPEN_OPCODE(ADD,               NONE,       NONE, "pops two values and pushes their sum")
+CPEN_OPCODE(SUBTRACT,          NONE,       NONE, "pops two values and pushes their difference")
+CPEN_OPCODE(MULTIPLY,          NONE,       NONE, "pops two values and pushes their product")
+CPEN_OPCODE(DIVIDE,            NONE,       NONE, "pops two values and pushes their quotient")
+CPEN_OPCODE(REMAINDER,         NONE,       NONE, "pops two values and pushes the remainder")
+CPEN_OPCODE(NEGATE,            NONE,       NONE, "negates the top value")
+
+CPEN_OPCODE(EQUAL,             NONE,       NONE, "pops two values and pushes whether they are equal")
+CPEN_OPCODE(NOT_EQUAL,         NONE,       NONE, "pops two values and pushes whether they differ")
+CPEN_OPCODE(LESS,              NONE,       NONE, "pops two values and compares them")
+CPEN_OPCODE(LESS_OR_EQUAL,     NONE,       NONE, "pops two values and compares them")
+CPEN_OPCODE(GREATER,           NONE,       NONE, "pops two values and compares them")
+CPEN_OPCODE(GREATER_OR_EQUAL,  NONE,       NONE, "pops two values and compares them")
+
+CPEN_OPCODE(NOT,               NONE,       NONE, "replaces the top value with its negation")
+
+/// Pops the given number of values and pushes them joined into one text value.
+///
+/// What string interpolation compiles to. A separate instruction rather than a
+/// chain of ADD so that '+' can stay strict: a language where adding a number to
+/// a piece of text quietly works is a language where a typo becomes a sentence
+/// with a number in the middle of it.
+CPEN_OPCODE(CONCATENATE,       COUNT,      NONE, "joins values into one text value")
+
+// --- Control flow -----------------------------------------------------------
+//
+// Addresses are absolute offsets into the code, not relative displacements: a
+// jump can then reach anywhere without the compiler proving a range, and a saved
+// instruction pointer means the same thing as an address in a jump.
+//
+// The conditional jumps read the top of the stack without removing it. The
+// compiler emits the POP, which is what lets `and` and `or` leave their result
+// where it is while `if` discards its condition.
+
+CPEN_OPCODE(JUMP,              ADDRESS,    NONE, "continues at the address")
+CPEN_OPCODE(JUMP_IF_FALSE,     ADDRESS,    NONE, "continues at the address if the top value is false")
+CPEN_OPCODE(JUMP_IF_TRUE,      ADDRESS,    NONE, "continues at the address if the top value is true")
+
+// --- Presentation -----------------------------------------------------------
+//
+// These are the instructions that speak to the world outside the machine, and
+// the two that suspend it. SAY and MENU return control to the game loop with a
+// reason to wait; the loop resumes the machine when the player has answered.
+
+/// Pops the line and emits it as spoken by constants[a], which is nil for
+/// narration. The line is on the stack rather than in the operand because an
+/// interpolated line is not known until it is said.
+CPEN_OPCODE(SAY,               CONSTANT,   NONE, "says a line and waits for the reader")
+CPEN_OPCODE(PAUSE,             NONE,       NONE, "pops a duration and waits that long")
+
+/// Pops one prompt per choice, in the order the choices are written, and offers
+/// them. The menu table holds the address each choice continues at.
+CPEN_OPCODE(MENU,              MENU_TABLE, NONE, "offers a choice and waits for the player")
+
+CPEN_OPCODE(HALT,              NONE,       NONE, "ends execution")
+
+#undef CPEN_OPCODE
