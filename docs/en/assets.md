@@ -212,3 +212,48 @@ sprites/Alice/HappyBlush.png      works until it does not
 Non-ASCII names are supported and are not a mistake — but they are the names the
 case check cannot help with, so a typo in one is found by a player rather than by
 the engine.
+
+## Transparency: what the engine does to your alpha channel
+
+Every picture loaded through the asset layer is **premultiplied** on the way to
+the GPU: each colour channel is multiplied by that pixel's own alpha. You do not
+have to do anything, and you should not do it yourself — but it is worth knowing
+what it fixes, because the problem is invisible in the file.
+
+An exported PNG usually stores *something* in the colour channels of its fully
+transparent pixels — black, or whatever was on the layer underneath. Nothing
+displays those pixels, so no editor ever shows a problem. The graphics card,
+however, does not sample one pixel at a time: when a sprite is drawn at any size
+other than exactly 1:1, it blends neighbouring texels, and it blends the colour
+channels and the alpha channel **independently**. A texel halfway between an
+opaque yellow edge and a transparent black outside comes out as *half-transparent
+dark olive* rather than half-transparent yellow. Every character in the game
+picks up a dirty outline, worst where the artwork is brightest.
+
+Multiplying the colour by the alpha first puts both quantities in the same space,
+and the interpolation becomes correct. The engine then blends with `GL_ONE`
+instead of `GL_SRC_ALPHA`, which is the same composite arithmetic — not a
+different look.
+
+### What this means for you
+
+| If you | Then |
+|---|---|
+| load a picture through an identifier | nothing to do; it is premultiplied for you |
+| build a texture from pixels in C++ | call `Image::premultiply_alpha()` before uploading, or it will composite twice as dark |
+| draw with your own blend mode | `BlendMode::PREMULTIPLIED` for anything from the asset layer, `BlendMode::ALPHA` only for pixels you know are straight |
+
+`premultiply_alpha()` is idempotent, so a picture cannot be darkened by being
+premultiplied on two paths.
+
+### One authoring rule that the engine cannot fix for you
+
+**Leave at least one fully transparent row of pixels around the edge of every
+cut-out sprite.**
+
+Textures are clamped at their edges, which means the outermost row of texels is
+repeated outwards forever. If your character's artwork touches the edge of the
+canvas, that last opaque row is what gets stretched, and the sprite ends in a
+hard smear instead of fading out. A one-pixel transparent border costs nothing
+and removes the whole class of problem. What colour that border is written in no
+longer matters — premultiplication zeroes it.

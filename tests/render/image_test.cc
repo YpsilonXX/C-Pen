@@ -303,3 +303,105 @@ TEST_CASE("generated pixels are wrapped without being copied or checked twice",
         CHECK(image.error().code == ErrorCode::INVALID_FORMAT);
     }
 }
+
+TEST_CASE("premultiplying scales each colour channel by its own alpha",
+          "[render][image]")
+{
+    // Values chosen to be checkable by hand: 200 at half alpha, 255 at half
+    // alpha, and an opaque pixel that must come out untouched.
+    constexpr std::array<std::uint8_t, 16> VALUES = {
+        200, 100, 50, 128,
+        255, 255, 255, 128,
+        220, 30, 30, 255,
+        90, 90, 90, 0,
+    };
+
+    std::vector<std::byte> pixels;
+
+    for (const std::uint8_t value : VALUES)
+    {
+        pixels.push_back(static_cast<std::byte>(value));
+    }
+
+    auto image = Image::from_pixels(std::move(pixels), 2, 2, PixelFormat::RGBA8);
+    REQUIRE(image.has_value());
+
+    CHECK_FALSE(image->is_premultiplied());
+
+    image->premultiply_alpha();
+
+    REQUIRE(image->is_premultiplied());
+
+    trace_step("200 at alpha 128 is 100, rounded rather than truncated");
+    CHECK(channel(*image, 0) == 100);
+    CHECK(channel(*image, 1) == 50);
+    CHECK(channel(*image, 2) == 25);
+    CHECK(channel(*image, 3) == 128);
+
+    trace_step("white at half alpha is the grey a correct composite produces");
+    CHECK(channel(*image, 4) == 128);
+
+    trace_step("an opaque pixel is left exactly as it was");
+    CHECK(channel(*image, 8) == 220);
+    CHECK(channel(*image, 9) == 30);
+
+    // The pixel the whole operation exists for: fully transparent, and now
+    // carrying no colour at all, so filtering across the edge of a sprite cannot
+    // drag a dark fringe into it.
+    trace_step("a transparent pixel keeps nothing of the colour it was written with");
+    CHECK(channel(*image, 12) == 0);
+    CHECK(channel(*image, 13) == 0);
+    CHECK(channel(*image, 15) == 0);
+}
+
+TEST_CASE("premultiplying twice is premultiplying once", "[render][image]")
+{
+    constexpr std::array<std::uint8_t, 4> VALUES = {200, 100, 50, 128};
+
+    std::vector<std::byte> pixels;
+
+    for (const std::uint8_t value : VALUES)
+    {
+        pixels.push_back(static_cast<std::byte>(value));
+    }
+
+    auto image = Image::from_pixels(std::move(pixels), 1, 1, PixelFormat::RGBA8);
+    REQUIRE(image.has_value());
+
+    image->premultiply_alpha();
+    const unsigned int once = channel(*image, 0);
+
+    // Two paths could each decide a picture needs premultiplying — the asset
+    // manager on the way to a texture, and a caller that did it first. Darkening
+    // it a second time would be a bug nobody could see the cause of.
+    image->premultiply_alpha();
+
+    CHECK(channel(*image, 0) == once);
+    CHECK(once == 100);
+}
+
+TEST_CASE("a format with no alpha is left alone", "[render][image]")
+{
+    constexpr std::array<std::uint8_t, 3> VALUES = {200, 100, 50};
+
+    std::vector<std::byte> pixels;
+
+    for (const std::uint8_t value : VALUES)
+    {
+        pixels.push_back(static_cast<std::byte>(value));
+    }
+
+    auto image = Image::from_pixels(std::move(pixels), 1, 1, PixelFormat::RGB8);
+    REQUIRE(image.has_value());
+
+    image->premultiply_alpha();
+
+    trace_step("nothing to multiply by, and nothing changed");
+    CHECK(channel(*image, 0) == 200);
+    CHECK(channel(*image, 1) == 100);
+    CHECK(channel(*image, 2) == 50);
+
+    // Still marked: an opaque image is already in the premultiplied space, and
+    // saying so is what keeps the caller from special-casing formats.
+    CHECK(image->is_premultiplied());
+}

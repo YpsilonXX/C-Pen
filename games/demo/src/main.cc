@@ -1,6 +1,8 @@
 #include <cpen/app/application.hh>
+#include <cpen/core/error.hh>
 #include <cpen/core/log.hh>
 #include <cpen/render/font.hh>
+#include <cpen/render/image.hh>
 #include <cpen/render/pixel_format.hh>
 #include <cpen/render/renderer.hh>
 #include <cpen/render/sprite.hh>
@@ -20,6 +22,7 @@
 #include <memory>
 #include <optional>
 #include <string_view>
+#include <utility>
 #include <variant>
 #include <vector>
 
@@ -76,6 +79,25 @@ namespace
         }
 
         return pixels;
+    }
+
+    /// Builds a texture from generated pixels the way the asset layer builds one
+    /// from a file.
+    ///
+    /// Premultiplied, because that is the space the sprite batch blends in.
+    /// Anything reaching it straight is composited twice against its own alpha and
+    /// comes out too dark wherever it is not opaque.
+    std::expected<render::Texture, core::Error> make_texture(
+        std::vector<std::byte> pixels, const std::uint32_t width, const std::uint32_t height,
+        const render::TextureConfig& config = {})
+    {
+        return render::Image::from_pixels(std::move(pixels), width, height,
+                                          render::PixelFormat::RGBA8)
+            .and_then([&config](render::Image image) -> std::expected<render::Texture, core::Error>
+            {
+                image.premultiply_alpha();
+                return render::Texture::from_image(image, config);
+            });
     }
 
     constexpr std::uint32_t TITLE_PIXEL_SIZE = 64;
@@ -143,12 +165,13 @@ namespace
     /// instead of by the edge of the quad — which is what a cut-out character is,
     /// and why no amount of multisampling would be needed to draw one smoothly.
     ///
-    /// The transparent ring keeps the colour of the texel beside it and changes
-    /// only its alpha. Blending is straight rather than premultiplied, so linear
-    /// filtering interpolates the colour channels as well: a ring left black would
-    /// darken the colour on the way out as the alpha fell, and the sprite would
-    /// come out with a dark halo all round it. Carrying the neighbour's colour
-    /// makes the ramp touch nothing but the alpha.
+    /// The transparent ring is written with the colour of the texel beside it,
+    /// which no longer matters and is left as a demonstration that it does not:
+    /// the pixels are premultiplied on the way to the GPU, so every fully
+    /// transparent texel becomes zero whatever colour it was written with, and
+    /// linear filtering interpolates colour and alpha in the same space. Before
+    /// that, a ring left black darkened the colour as the alpha fell and every
+    /// sprite came out with a dirty outline.
     std::vector<std::byte> generate_soft_checkerboard()
     {
         constexpr std::array<std::uint8_t, 3> LIGHT = {230, 220, 200};
@@ -399,14 +422,8 @@ namespace
             // and stretched over most of the window: linear filtering would blur
             // every cell boundary into a gradient and hide exactly what the
             // texture is here to show.
-            // Named rather than passed inline: a std::span built from a temporary
-            // vector stays valid only to the end of the full expression, which is
-            // true here but is not a rule worth relying on in passing.
-            const std::vector<std::byte> checkerboard = generate_checkerboard();
-
-            auto created_texture = render::Texture::from_pixels(
-                checkerboard, CHECKERBOARD_SIZE, CHECKERBOARD_SIZE,
-                render::PixelFormat::RGBA8,
+            auto created_texture = make_texture(
+                generate_checkerboard(), CHECKERBOARD_SIZE, CHECKERBOARD_SIZE,
                 render::TextureConfig{
                     .minify_filter = render::TextureFilter::NEAREST,
                     .magnify_filter = render::TextureFilter::NEAREST,
@@ -425,11 +442,8 @@ namespace
             // Linear filtering this time, and no override of the default: a texture
             // large enough not to be magnified far is what LINEAR is the right
             // answer for, and TextureConfig already says so by defaulting to it.
-            const std::vector<std::byte> smooth = generate_soft_checkerboard();
-
-            auto created_soft = render::Texture::from_pixels(
-                smooth, SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE,
-                render::PixelFormat::RGBA8);
+            auto created_soft = make_texture(generate_soft_checkerboard(),
+                                             SOFT_CHECKERBOARD_SIZE, SOFT_CHECKERBOARD_SIZE);
             if (!created_soft)
             {
                 log::error(log::Category::RENDER, "{}", created_soft.error());

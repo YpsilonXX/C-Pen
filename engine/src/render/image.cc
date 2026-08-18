@@ -179,4 +179,49 @@ namespace cpen::render
 
         return Image{std::move(pixels), width, height, format};
     }
+
+    void Image::premultiply_alpha() noexcept
+    {
+        if (this->premultiplied)
+        {
+            return;
+        }
+
+        // Only RGBA8 has an alpha channel to multiply by. Marking the others as
+        // done is not a lie: there is nothing to do, and the flag says the image
+        // is in the premultiplied space, which for an opaque format it already is.
+        if (this->pixel_format != PixelFormat::RGBA8)
+        {
+            this->premultiplied = true;
+            return;
+        }
+
+        constexpr std::size_t CHANNELS = 4;
+        constexpr std::size_t ALPHA = 3;
+
+        for (std::size_t offset = 0; offset + CHANNELS <= this->data.size();
+             offset += CHANNELS)
+        {
+            const auto alpha = static_cast<std::uint32_t>(this->data[offset + ALPHA]);
+
+            if (alpha == 255)
+            {
+                continue;
+            }
+
+            for (std::size_t channel = 0; channel < ALPHA; ++channel)
+            {
+                const auto value = static_cast<std::uint32_t>(this->data[offset + channel]);
+
+                // Rounded, not truncated: (value * alpha) / 255 alone loses up to
+                // a whole level on every channel of every pixel, which over a
+                // gradient is a visible banding step rather than a rounding
+                // detail. The +127 is the half-step that turns it into a round.
+                this->data[offset + channel] =
+                    static_cast<std::byte>((value * alpha + 127) / 255);
+            }
+        }
+
+        this->premultiplied = true;
+    }
 }

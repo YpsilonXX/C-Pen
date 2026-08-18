@@ -42,19 +42,32 @@ namespace cpen::render
         /// Straight, non-premultiplied alpha: the fragment's own alpha decides how
         /// much of it shows.
         ///
-        /// Straight rather than premultiplied because that is what a PNG contains
-        /// as authored. Premultiplied blends more correctly under filtering and
-        /// composes in more places, but it requires every asset to be converted on
-        /// the way in, and there is no asset pipeline to convert them in yet.
+        /// What a PNG contains as authored, and therefore what anything drawn
+        /// straight from a decoder wants. The sprite batch does not: the asset
+        /// layer premultiplies on load, so it draws with PREMULTIPLIED.
         ALPHA,
+
+        /// Premultiplied alpha: the fragment's colour channels already carry their
+        /// own alpha, so they are added rather than scaled.
+        ///
+        /// The two modes differ only in the source factor — GL_ONE instead of
+        /// GL_SRC_ALPHA — because multiplying by alpha is exactly the step that has
+        /// already been done to the pixels.
+        ///
+        /// This is the mode for anything that came through the asset layer, and
+        /// using the wrong one is visible rather than subtle: premultiplied pixels
+        /// blended as straight alpha are darkened a second time, and straight
+        /// pixels blended as premultiplied wash out anything behind them.
+        PREMULTIPLIED,
     };
 
     constexpr std::string_view to_string(const BlendMode mode) noexcept
     {
         switch (mode)
         {
-            case BlendMode::NONE:  return "none";
-            case BlendMode::ALPHA: return "alpha";
+            case BlendMode::NONE:          return "none";
+            case BlendMode::ALPHA:         return "alpha";
+            case BlendMode::PREMULTIPLIED: return "premultiplied";
         }
         return "unknown";
     }

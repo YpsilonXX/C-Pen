@@ -59,6 +59,37 @@ namespace cpen::render
             std::vector<std::byte> pixels, std::uint32_t width, std::uint32_t height,
             PixelFormat format);
 
+        /// Multiplies each colour channel by its own alpha, in place.
+        ///
+        /// What this fixes is a dark fringe around every cut-out sprite, and it is
+        /// worth knowing why, because the cause is invisible in the file. A PNG
+        /// exported by most tools stores black — or whatever was underneath — in
+        /// the colour channels of its fully transparent pixels; nothing displays
+        /// them, so nothing complains. But a texture sampled with linear filtering
+        /// interpolates the colour channels *and* the alpha, independently: a
+        /// texel halfway between an opaque yellow edge and a transparent black
+        /// outside comes out as half-alpha dark olive, not as half-alpha yellow.
+        /// The silhouette of every character picks up a dirty outline.
+        ///
+        /// Multiplying first makes the interpolation correct, because the two
+        /// quantities being mixed are then in the same space — but it changes what
+        /// the pixels mean, so the blend function has to change with it. Anything
+        /// drawn from premultiplied pixels must be blended with
+        /// BlendMode::PREMULTIPLIED; blended as straight alpha it comes out
+        /// darkened twice over.
+        ///
+        /// Idempotent: a second call does nothing, so a picture cannot be darkened
+        /// by being premultiplied on two paths. A format with no alpha channel is
+        /// left exactly as it is.
+        void premultiply_alpha() noexcept;
+
+        /// Whether premultiply_alpha() has run on this image.
+        ///
+        /// A record of what was done, not a claim about the artwork: pixels handed
+        /// to from_pixels are taken as straight, since that is what a decoder
+        /// produces and what an author draws.
+        bool is_premultiplied() const noexcept { return this->premultiplied; }
+
         std::span<const std::byte> pixels() const noexcept { return this->data; }
 
         std::uint32_t width() const noexcept { return this->pixel_width; }
@@ -82,6 +113,7 @@ namespace cpen::render
         std::uint32_t pixel_width = 0;
         std::uint32_t pixel_height = 0;
         PixelFormat pixel_format = PixelFormat::RGBA8;
+        bool premultiplied = false;
     };
 }
 

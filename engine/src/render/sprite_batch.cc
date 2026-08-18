@@ -45,13 +45,25 @@ void main()
 }
 )";
 
+        /// Everything here is in premultiplied space: the batch blends with
+        /// BlendMode::PREMULTIPLIED, because the asset layer multiplies every
+        /// picture by its own alpha on load.
+        ///
         /// `alpha_only` is one for a single-channel texture and zero otherwise.
         ///
         /// A one-channel texture samples as (r, 0, 0, 1) in GLSL: a glyph atlas
         /// holds coverage in red and no colour at all, so multiplying it by the
         /// tint the way an RGBA texture is multiplied would draw red boxes. Read
         /// as white at that coverage instead, the tint becomes the glyph's colour,
-        /// which is what makes text a sprite like any other.
+        /// which is what makes text a sprite like any other. vec4(r) rather than
+        /// vec4(1, 1, 1, r) because white premultiplied by its own coverage is
+        /// exactly that — the atlas needs no conversion pass, its texels are
+        /// already in the right space.
+        ///
+        /// The tint arrives straight, as an author writes it, and is premultiplied
+        /// here: colour by its own alpha, and both by the source. That keeps the
+        /// vertex data a plain RGBA colour that can be read back and reasoned
+        /// about.
         ///
         /// Written per flush rather than per sprite: a batch is already split by
         /// texture, and how many channels a texture has is the texture's property
@@ -69,9 +81,9 @@ out vec4 fragment_color;
 void main()
 {
     vec4 sampled = texture(source, texture_coordinate);
-    vec4 source_color = mix(sampled, vec4(1.0, 1.0, 1.0, sampled.r), alpha_only);
+    vec4 source_color = mix(sampled, vec4(sampled.r), alpha_only);
 
-    fragment_color = source_color * tint;
+    fragment_color = source_color * vec4(tint.rgb * tint.a, tint.a);
 }
 )";
 
@@ -224,7 +236,7 @@ void main()
         this->shader.set_uniform("source", static_cast<int>(SPRITE_TEXTURE_UNIT));
         Shader::unbind();
 
-        set_blend(BlendMode::ALPHA);
+        set_blend(BlendMode::PREMULTIPLIED);
     }
 
     void SpriteBatch::draw(const Texture& texture, const Sprite& sprite)

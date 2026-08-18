@@ -56,6 +56,11 @@ namespace cpen::render
 
         glEnable(GL_BLEND);
 
+        // Premultiplied differs in one factor: the colour channels already carry
+        // their alpha, so they are taken whole instead of being scaled by it again.
+        const GLenum source_color_factor =
+            mode == BlendMode::PREMULTIPLIED ? GL_ONE : GL_SRC_ALPHA;
+
         // The alpha channel is blended separately, and not with the same factors.
         // Taken through GL_SRC_ALPHA like the colour channels, the destination's
         // alpha would come out as the product of the two rather than their union,
@@ -64,7 +69,7 @@ namespace cpen::render
         // GL_ONE_MINUS_SRC_ALPHA accumulates coverage instead. It makes no
         // difference to the default framebuffer, whose alpha nothing reads, and all
         // the difference to a render target that is composited later.
-        glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA,
+        glBlendFuncSeparate(source_color_factor, GL_ONE_MINUS_SRC_ALPHA,
                             GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     }
 

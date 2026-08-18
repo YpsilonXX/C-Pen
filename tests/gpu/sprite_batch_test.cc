@@ -1,5 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "cpen/render/draw.hh"
+#include "cpen/render/image.hh"
 #include "cpen/render/pixel_format.hh"
 #include "cpen/render/sprite_batch.hh"
 #include "cpen/render/texture.hh"
@@ -362,6 +364,74 @@ TEST_CASE("a sprite with alpha is blended into what is there",
         // process, so state left enabled here would surface as an unrelated failure
         // somewhere else entirely.
         CHECK(enabled == GL_FALSE);
+    }
+}
+
+TEST_CASE("a premultiplied texture composites as the artwork intended",
+          "[render][sprite_batch][gpu]")
+{
+    gl_context();
+
+    const RenderTarget target;
+    REQUIRE(target.is_complete());
+
+    const Viewport viewport = target_viewport();
+    SpriteBatch batch = make_batch();
+
+    // White at half alpha, put through the same step the asset layer applies to
+    // every picture it loads. What reaches the driver is (128, 128, 128, 128).
+    std::vector<std::byte> pixels;
+    for (const std::uint8_t value : std::array<std::uint8_t, 4>{255, 255, 255, 128})
+    {
+        pixels.push_back(static_cast<std::byte>(value));
+    }
+
+    auto image = cpen::render::Image::from_pixels(std::move(pixels), 1, 1, PixelFormat::RGBA8);
+    REQUIRE(image.has_value());
+    image->premultiply_alpha();
+
+    auto texture = Texture::from_image(*image, TextureConfig{
+                                                   .minify_filter = TextureFilter::NEAREST,
+                                                   .magnify_filter = TextureFilter::NEAREST,
+                                               });
+    REQUIRE(texture.has_value());
+
+    cpen::render::clear(glm::vec4{1.0f, 0.0f, 0.0f, 1.0f});
+
+    batch.begin(viewport.projection());
+    batch.draw(*texture, Sprite{
+                             .position = {0.0f, 0.0f},
+                             .size = {TARGET_SIZE, TARGET_SIZE},
+                         });
+    batch.end();
+
+    const auto centre = target.centre_pixel();
+    trace_pixel("half-transparent white over red", centre);
+
+    // Half white over full red is (128, 128, 128) + (127, 0, 0) — the same answer
+    // straight alpha would give, which is the point: premultiplying the pixels and
+    // blending with GL_ONE is not a different look, it is the same composite done
+    // where filtering cannot spoil it.
+    CHECK(centre[0] > 235);
+    CHECK(centre[1] > 100);
+    CHECK(centre[1] < 155);
+    CHECK(centre[2] > 100);
+    CHECK(centre[2] < 155);
+
+    SECTION("and the same pixels drawn straight would be visibly darker")
+    {
+        // Not a second draw: the arithmetic is the whole argument. Straight
+        // blending would scale the already-multiplied 128 by its own alpha again,
+        // giving 64 where the correct answer is 128 — the doubled darkening that
+        // makes the mode a property of the pixels rather than a preference.
+        constexpr int PREMULTIPLIED_RESULT = 128;
+        constexpr int STRAIGHT_RESULT = (128 * 128 + 127) / 255;
+
+        trace("premultiplied {}, straight would be {}", PREMULTIPLIED_RESULT,
+              STRAIGHT_RESULT);
+
+        CHECK(STRAIGHT_RESULT < PREMULTIPLIED_RESULT);
+        CHECK(centre[1] > STRAIGHT_RESULT + 20);
     }
 }
 

@@ -65,8 +65,14 @@ namespace cpen::assets
                     {
                         return render::Image::from_memory(encoded);
                     })
-                    .and_then([](const render::Image& decoded)
+                    .and_then([](render::Image decoded)
                     {
+                        // The one place this happens, and the reason the load
+                        // path exists at all rather than callers making textures
+                        // themselves: everything the sprite batch draws has to be
+                        // in premultiplied space, because that is the space it
+                        // blends in.
+                        decoded.premultiply_alpha();
                         return render::Texture::from_image(decoded);
                     });
             });
