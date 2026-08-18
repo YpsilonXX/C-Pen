@@ -44,6 +44,11 @@ target_include_directories(cpen_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
 target_link_libraries(cpen_tests PRIVATE cpen cpen_warnings cpen_sanitizers Catch2::Catch2WithMain)
 
+# The tests load the engine's shipped typeface exactly as a game does — through
+# the roots beside the executable — so those files have to be beside this
+# executable too.
+cpen_stage_engine_assets(cpen_tests)
+
 catch_discover_tests(cpen_tests)
 
 if(CPEN_BUILD_GPU_TESTS)
@@ -58,6 +63,8 @@ if(CPEN_BUILD_GPU_TESTS)
     # LSAN_OPTIONS=detect_leaks=0, or a suppression file, when running it.
     target_link_libraries(cpen_gpu_tests
         PRIVATE cpen cpen_warnings cpen_sanitizers Catch2::Catch2WithMain)
+
+    cpen_stage_engine_assets(cpen_gpu_tests)
 
     # Deliberately not catch_discover_tests: these are run by hand, never as part
     # of the default sweep. See the option's comment in the top-level file.

@@ -11,8 +11,10 @@
 #include <expected>
 #include <filesystem>
 #include <memory>
+#include <span>
 #include <string_view>
 #include <unordered_map>
+#include <vector>
 
 /// Forward-declared, not included: FreeType is an implementation detail of this
 /// class exactly as GLFW is of platform::Window, and FT_Face is a pointer to this.
@@ -94,6 +96,25 @@ namespace cpen::render
                                                           std::uint32_t pixel_size,
                                                           const FontConfig& config = {});
 
+        /// Loads a typeface from bytes already in memory.
+        ///
+        /// This is the form the asset layer uses, and the reason it exists: a
+        /// typeface read out of a mounted root — or, later, out of a packed
+        /// archive — has no path to give FreeType. from_file is a thin wrapper
+        /// around it.
+        ///
+        /// The bytes are copied and kept for the lifetime of the Font. FreeType
+        /// does not copy them: FT_New_Memory_Face reads from the caller's buffer
+        /// on every glyph rasterised, so a face outliving its data reads freed
+        /// memory. Owning the copy is what makes that impossible rather than
+        /// merely documented.
+        ///
+        /// `description` is what error messages and the log call this typeface —
+        /// a virtual path, usually. It has no other meaning.
+        static std::expected<Font, core::Error> from_memory(
+            std::span<const std::byte> data, std::uint32_t pixel_size,
+            const FontConfig& config = {}, std::string_view description = "memory");
+
         ~Font();
 
         Font(Font&& other) noexcept;
@@ -148,7 +169,8 @@ namespace cpen::render
 
     private:
         Font(std::shared_ptr<detail::FreeTypeLibrary> owning_library, FT_FaceRec_* loaded_face,
-             Texture texture, std::uint32_t pixel_size, std::uint32_t atlas_size);
+             std::vector<std::byte> data, Texture texture, std::uint32_t pixel_size,
+             std::uint32_t atlas_size);
 
         /// Rasterises `code_point` and copies it into the atlas.
         const Glyph* rasterize(char32_t code_point);
@@ -161,6 +183,11 @@ namespace cpen::render
 
         std::shared_ptr<detail::FreeTypeLibrary> library;
         FT_FaceRec_* face = nullptr;
+
+        /// The typeface file itself, which FreeType reads from for as long as the
+        /// face exists. Moving a Font moves this buffer's ownership, not the
+        /// buffer, so the pointer FreeType holds stays good.
+        std::vector<std::byte> face_data;
 
         Texture atlas_texture;
         std::unordered_map<char32_t, Glyph> glyphs;

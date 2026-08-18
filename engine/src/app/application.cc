@@ -3,6 +3,9 @@
 #include "cpen/core/log.hh"
 
 #include <algorithm>
+#include <expected>
+#include <optional>
+#include <string>
 #include <utility>
 #include <variant>
 
@@ -18,13 +21,17 @@ namespace cpen::app
           main_window(this->platform_context, this->configuration.window),
           main_renderer(make_renderer(this->configuration)),
           blackboard(this->event_bus),
+          asset_resolver(this->file_system),
+          asset_manager(this->file_system, this->asset_resolver),
           game_context(runtime::GameContext{
               .blackboard = this->blackboard,
               .event_bus = this->event_bus,
               .renderer = this->main_renderer,
+              .assets = this->asset_manager,
           }),
           stack(this->game_context)
     {
+        this->mount_roots();
         this->refit_viewport();
 
         const render::Viewport& viewport = this->main_renderer.viewport();
@@ -54,6 +61,52 @@ namespace cpen::app
         return render::Renderer{render::Viewport{settings.virtual_width,
                                                  settings.virtual_height,
                                                  settings.scale_mode}};
+    }
+
+    void Application::mount_roots()
+    {
+        std::optional<AssetRoots> roots = this->configuration.roots;
+
+        if (!roots.has_value())
+        {
+            std::expected<AssetRoots, core::Error> located = default_asset_roots();
+
+            if (!located.has_value())
+            {
+                // Survivable in the same way a renderer that will not build is:
+                // every asset will report itself missing, each with its own line,
+                // which is a far more useful state to be in than a process that
+                // exited before anything could be read.
+                log::error(log::Category::ASSETS,
+                           "{}; no roots are mounted and no asset can be found",
+                           located.error());
+                return;
+            }
+
+            roots = std::move(*located);
+        }
+
+        // The game first. Everything the engine ships is a default, and a default
+        // that cannot be replaced is not one.
+        this->file_system.mount(roots->game);
+        this->file_system.mount(roots->engine);
+    }
+
+    void Application::report_asset_problems() const
+    {
+        const std::string missing = this->asset_manager.format_missing_summary();
+
+        if (!missing.empty())
+        {
+            log::error(log::Category::ASSETS, "{}", missing);
+        }
+
+        const std::string mismatched = this->file_system.format_case_mismatch_summary();
+
+        if (!mismatched.empty())
+        {
+            log::error(log::Category::ASSETS, "{}", mismatched);
+        }
     }
 
     void Application::refit_viewport()
@@ -129,5 +182,7 @@ namespace cpen::app
 
         log::info(log::Category::APP, "loop ended: running={}, window closing={}, states={}",
                   this->running, this->main_window.should_close(), this->stack.size());
+
+        this->report_asset_problems();
     }
 }

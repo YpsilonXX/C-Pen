@@ -1,0 +1,304 @@
+# Assets: paths and names
+
+Every file a game loads — a background, a sprite, a typeface, a script, a sound —
+is asked for by a **virtual path**:
+
+```
+sprites/alice/happy.png
+fonts/ui.ttf
+script/chapter_01.pen
+```
+
+Nothing above the asset layer knows where that file really is. The engine mounts
+one or more **roots** and searches them in order; the first one that has the file
+answers. Today a root is a directory; later it may be an archive, and no code
+that asks for `fonts/ui.ttf` will change.
+
+## Roots and shadowing
+
+The engine mounts two directories and searches them in order:
+
+| Order | Root | Holds |
+|---|---|---|
+| 1 | the game directory | everything the game ships |
+| 2 | the engine directory | what the engine guarantees is always there |
+
+The first hit wins, so a game that ships its own `assets/fonts/default.ttf`
+replaces the engine's typeface without having to know that there was one. There
+is no way to ask for a specific root: an asset has one name, and which file
+answers to it is the mount order's business.
+
+### Where they are
+
+Both are found **beside the executable**, never relative to the working
+directory:
+
+```
+cpen_demo            the program
+game/                assets/, script/, game.toml     <- the game root
+engine/              assets/fonts/default.ttf        <- the engine root
+```
+
+The working directory is whatever the shell, the launcher, the desktop shortcut
+or the debugger happened to be in. A game that reads its files relative to it
+runs when started one way and fails when started another — and the failure looks
+like a corrupt install rather than a wrong directory. The executable's own path
+is asked of the operating system, so it is right however the program was
+started.
+
+In a build tree the same layout is produced for you: the build copies the game's
+directory and the engine's assets next to each binary it produces, test binaries
+included.
+
+### Moving them
+
+```
+cpen_demo --game /srv/novels/chapter-two
+cpen_demo --engine=/opt/cpen
+```
+
+Both spellings work. A relative path is resolved against the working directory —
+somebody typing a path means the path they can see. An option the engine does not
+recognise is ignored, because a game is entitled to its own command line; an
+override with nothing after it is refused, because the silent version of that
+typo is a game that starts on the wrong data and reports every asset missing.
+
+## What the engine ships
+
+One typeface, at `assets/fonts/default.ttf` in the engine root: a copy of DejaVu
+Sans, chosen for covering Latin, Cyrillic and Greek in one face. It is what
+`AssetManager::default_font(pixel_size)` loads, what the engine's own text is
+drawn with, and what a game can rely on before it has chosen a typeface of its
+own.
+
+To replace it, ship `assets/fonts/default.ttf` in the game root. Nothing needs to
+be registered or configured — the game's root is mounted first, so its file wins.
+
+## Identifiers: what a game actually writes
+
+A script never spells a path. It names the asset and says what it is for:
+
+```
+scene room                 -> a BACKGROUND called "room"
+show alice happy           -> a SPRITE called "alice/happy"
+play music theme           -> AUDIO called "theme"
+```
+
+The kind comes from the statement, the identifier from the author, and the
+engine turns the pair into a path:
+
+| Kind | Directory | Tried extensions, in order | `room` resolves to |
+|---|---|---|---|
+| background | `assets/bg/` | `png`, `jpg`, `jpeg` | `assets/bg/room.png` |
+| sprite | `assets/sprites/` | `png`, `jpg`, `jpeg` | `assets/sprites/room.png` |
+| font | `assets/fonts/` | `ttf`, `otf` | `assets/fonts/room.ttf` |
+| audio | `assets/audio/` | `ogg`, `wav`, `mp3`, `flac` | `assets/audio/room.ogg` |
+| script | `script/` | `pen` | `script/room.pen` |
+
+Scripts sit beside `assets/` rather than inside it: they are the game, not
+something the game shows.
+
+Because the kind is part of the question, a background and a character may both
+be called `alice` without colliding.
+
+### Identifiers carry no extension
+
+```
+show alice happy           good
+show alice happy.png       refused
+```
+
+Finding the file type is the engine's job — that is what makes `png` → `jpg`
+a decision about the file and not an edit to every line that mentions it. An
+identifier ending in an extension the kind knows is refused with the spelling it
+should have had. A dot that is not an extension (`alice.happy`) is an ordinary
+character and is fine.
+
+Otherwise an identifier follows the same rules as a virtual path: `/` groups,
+nothing else separates, and everything in the table below applies to it too.
+
+### More than one file for one identifier
+
+`assets/bg/room.png` and `assets/bg/room.jpg` both answer to `room`. The first
+extension in the table wins — deterministically, so nothing breaks — but the
+engine says so once:
+
+```
+[warn] [assets] background 'room' matches more than one file
+       (assets/bg/room.png, assets/bg/room.jpg); using 'assets/bg/room.png'.
+```
+
+This is worth a line in the log because the failure mode is silent: an author who
+converts a picture and leaves the original behind spends an afternoon editing a
+file the game never opens. The extra probing this needs happens only while the
+path audit is on, so a release build stops at the first file it finds.
+
+### Aliases
+
+An identifier can be pointed at a path of its own, which is how the manifest will
+override the convention — for an asset kept somewhere unusual, one shared between
+two names, or later an entry inside a packed atlas. An alias is checked when it
+is registered (a hand-typed path with a typo is refused there and then) and again
+when it is used (a well-formed path to a file that does not exist reports that it
+came from an alias, so the author knows to look in the manifest and not in the
+script).
+
+## What a virtual path may contain
+
+A virtual path is UTF-8 text, uses `/` as its only separator, and is always
+relative to a root. The engine refuses anything else **before** touching the
+disk, and says why.
+
+| Refused | Example | Why |
+|---|---|---|
+| empty path or empty component | `bg//room.png`, `bg/` | almost always a join that added one separator too many |
+| leading `/`, or a drive letter | `/etc/passwd`, `C:/fonts/arial.ttf` | an absolute path escapes the roots and means a different file on every machine |
+| backslash | `sprites\alice.png` | a separator on Windows, an ordinary filename character on Linux — the same path names two different things |
+| `.` and `..` | `../saves/slot_01.save` | an archive has no parent directory to climb to, and a path built from player-supplied text could otherwise reach out of the game directory |
+| `:` | `bg/room:2.png` | names a drive or an alternate data stream on Windows; cannot appear in a file name there |
+| control characters | a tab inside a name | not a file name on any system |
+| component ending in a space or a dot | `bg/room .png`, `bg/room.` | Windows silently strips both when creating the file, so the name asked for is not the name that appears |
+| reserved device names | `nul.png`, `audio/con.ogg`, `COM1`, `lpt9.txt` | Windows cannot create such a file at all; the asset would exist only on Linux |
+
+Everything else is allowed, including non-ASCII names (`фоны/комната.png`) and
+spaces inside a name (`bg/room 2.png`).
+
+## Case sensitivity — read this one
+
+This is the most expensive naming mistake a game can make, because the machine
+that makes it is never the machine that suffers from it.
+
+| File system | Typical on | `sprites/Alice.png` vs `sprites/alice.png` |
+|---|---|---|
+| case-insensitive | Windows (NTFS), macOS (APFS by default) | the same file — either spelling opens it |
+| case-sensitive | Linux (ext4, btrfs, xfs), NTFS volumes with case sensitivity enabled, macOS volumes formatted case-sensitive | two different files — the wrong spelling finds nothing |
+
+So a game authored on Windows can spell an asset one way in the script and
+another way on disk, run perfectly for years, and be broken for every Linux
+player the day it ships. Nothing in a diff shows it. Nothing in a build log shows
+it. The author cannot reproduce it.
+
+### What the engine does about it
+
+The engine checks both sides of that split, and the check is not the same check
+in the two places:
+
+**When an asset loads** (the case-insensitive machine, where nothing looks
+wrong), the engine reads the real name out of the directory and compares it with
+the name that was asked for. A mismatch is logged as an error:
+
+```
+!!! ==================================================================== !!!
+!!!  ASSET NAME CASE MISMATCH - loads here, WILL NOT LOAD on Linux
+!!! ==================================================================== !!!
+  asked for : sprites/Alice.png
+  on disk   : sprites/alice.png
+  differs   : 'Alice.png' is spelled 'alice.png'
+  This file system matches names without regard to case, so the asset
+  loaded and nothing looks wrong. Linux matches exactly: there the file
+  is not found at all and the asset is missing.
+  Fix one side so both spell it the same way - rename the file, or
+  correct the identifier that asks for it. Nothing is renamed for you:
+  the engine cannot see what else refers to this file.
+!!! ==================================================================== !!!
+```
+
+**When an asset is missing** (the case-sensitive machine, where the load has
+already failed), the engine looks for a file whose name differs only in case and,
+finding one, says so in the error itself — `asset not found` becomes `found,
+spelled differently`.
+
+Each path is reported once however many times it is loaded, and **every mismatch
+is repeated in a summary when the game exits**, so a report that scrolled past
+during a long run cannot be missed at the end:
+
+```
+!!! ==================================================================== !!!
+!!!  2 ASSET NAME(S) DIFFER FROM THE FILES ON DISK ONLY IN CASE
+!!!  The same game does not run on Windows and on Linux until they agree.
+!!! ==================================================================== !!!
+  asked for 'sprites/alice.png' (loaded here, missing on a case-sensitive system)
+      'alice.png' is spelled 'Alice.png' under '/home/author/game'
+...
+```
+
+### When the check runs
+
+| Situation | Debug build | Release build |
+|---|---|---|
+| asset loaded successfully | checked | not checked |
+| asset missing | checked | checked |
+
+The successful path costs one directory scan per path component, which is why it
+is a development-time setting (`VirtualFileSystem::set_path_audit`) that defaults
+to on in a debug build and off in a release one. The failing path costs nothing
+that matters: the load has already failed, and a player's log saying exactly
+which file is misspelled is worth far more than the scan.
+
+### Limits of the check
+
+- **Only ASCII letters are folded.** Matching `Комната` against `комната` needs
+  the full Unicode case tables, which the engine does not carry. A mismatch in
+  non-ASCII names is reported as a missing file, not as a case problem.
+- **Nothing is renamed for you.** The engine sees the files, not the script lines
+  and manifest entries that refer to them, so an automatic rename would fix one
+  side and break the other. A tool that can see both — and therefore rename
+  safely — is planned for the phase that introduces the script layer.
+
+### The rule that avoids all of this
+
+**Name every asset in lower case ASCII**, with `_` or `-` between words:
+
+```
+sprites/alice/happy_blush.png     good
+sprites/Alice/HappyBlush.png      works until it does not
+```
+
+Non-ASCII names are supported and are not a mistake — but they are the names the
+case check cannot help with, so a typo in one is found by a player rather than by
+the engine.
+
+## Transparency: what the engine does to your alpha channel
+
+Every picture loaded through the asset layer is **premultiplied** on the way to
+the GPU: each colour channel is multiplied by that pixel's own alpha. You do not
+have to do anything, and you should not do it yourself — but it is worth knowing
+what it fixes, because the problem is invisible in the file.
+
+An exported PNG usually stores *something* in the colour channels of its fully
+transparent pixels — black, or whatever was on the layer underneath. Nothing
+displays those pixels, so no editor ever shows a problem. The graphics card,
+however, does not sample one pixel at a time: when a sprite is drawn at any size
+other than exactly 1:1, it blends neighbouring texels, and it blends the colour
+channels and the alpha channel **independently**. A texel halfway between an
+opaque yellow edge and a transparent black outside comes out as *half-transparent
+dark olive* rather than half-transparent yellow. Every character in the game
+picks up a dirty outline, worst where the artwork is brightest.
+
+Multiplying the colour by the alpha first puts both quantities in the same space,
+and the interpolation becomes correct. The engine then blends with `GL_ONE`
+instead of `GL_SRC_ALPHA`, which is the same composite arithmetic — not a
+different look.
+
+### What this means for you
+
+| If you | Then |
+|---|---|
+| load a picture through an identifier | nothing to do; it is premultiplied for you |
+| build a texture from pixels in C++ | call `Image::premultiply_alpha()` before uploading, or it will composite twice as dark |
+| draw with your own blend mode | `BlendMode::PREMULTIPLIED` for anything from the asset layer, `BlendMode::ALPHA` only for pixels you know are straight |
+
+`premultiply_alpha()` is idempotent, so a picture cannot be darkened by being
+premultiplied on two paths.
+
+### One authoring rule that the engine cannot fix for you
+
+**Leave at least one fully transparent row of pixels around the edge of every
+cut-out sprite.**
+
+Textures are clamped at their edges, which means the outermost row of texels is
+repeated outwards forever. If your character's artwork touches the edge of the
+canvas, that last opaque row is what gets stretched, and the sprite ends in a
+hard smear instead of fading out. A one-pixel transparent border costs nothing
+and removes the whole class of problem. What colour that border is written in no
+longer matters — premultiplication zeroes it.

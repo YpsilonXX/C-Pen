@@ -60,3 +60,24 @@ target_link_libraries(cpen
         stb_image
         miniaudio
 )
+
+# Where the engine's own files live in the source tree, and the function that
+# puts them beside a program that needs them.
+#
+# Everything the engine loads is found relative to the executable, never relative
+# to the working directory (see app/asset_roots.hh). That is what makes a built
+# game runnable from anywhere and a shipped one runnable at all — but it means a
+# program in the build tree has to have those files beside it too, which is what
+# this does. Applied to the demo and to both test binaries; each gets its own
+# copy, because each sits in a different directory.
+set(CPEN_ENGINE_ASSETS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/assets CACHE INTERNAL
+    "Source directory of the assets the engine ships")
+
+function(cpen_stage_engine_assets target)
+    add_custom_command(TARGET ${target} POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+                ${CPEN_ENGINE_ASSETS_DIR}
+                $<TARGET_FILE_DIR:${target}>/engine/assets
+        COMMENT "Staging engine assets beside ${target}"
+        VERBATIM)
+endfunction()

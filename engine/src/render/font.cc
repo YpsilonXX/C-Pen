@@ -1,5 +1,6 @@
 #include "cpen/render/font.hh"
 
+#include "cpen/core/file_system.hh"
 #include "cpen/core/log.hh"
 #include "cpen/render/pixel_format.hh"
 
@@ -116,12 +117,29 @@ namespace cpen::render
                                                      const std::uint32_t pixel_size,
                                                      const FontConfig& config)
     {
+        // Reading the file here rather than handing the path to FT_New_Face buys
+        // two things: one loading path for every typeface however it arrived, and
+        // error messages that distinguish a missing file from an unreadable one,
+        // which FreeType's single error code does not.
+        return core::read_file_bytes(path).and_then(
+            [&](const std::vector<std::byte>& data)
+            {
+                return Font::from_memory(data, pixel_size, config,
+                                         core::path_to_utf8(path));
+            });
+    }
+
+    std::expected<Font, core::Error> Font::from_memory(const std::span<const std::byte> data,
+                                                       const std::uint32_t pixel_size,
+                                                       const FontConfig& config,
+                                                       const std::string_view description)
+    {
         if (pixel_size == 0)
         {
             return std::unexpected(core::make_error(core::ErrorCode::INVALID_FORMAT,
                                                     "font '{}': a pixel size of zero has no "
                                                     "glyphs to rasterise",
-                                                    path.string()));
+                                                    description));
         }
 
         std::shared_ptr<detail::FreeTypeLibrary> library = acquire_library();
@@ -131,23 +149,19 @@ namespace cpen::render
                                                     "FreeType could not be initialised"));
         }
 
-        // Checked here rather than left to FT_New_Face, whose error code does not
-        // distinguish a missing file from an unreadable one from a file that is not
-        // a typeface at all.
-        std::error_code filesystem_error;
-        if (!std::filesystem::exists(path, filesystem_error))
-        {
-            return std::unexpected(core::make_error(core::ErrorCode::FILE_NOT_FOUND,
-                                                    "font '{}' does not exist",
-                                                    path.string()));
-        }
+        // Copied, not referenced: FreeType reads from this buffer for as long as
+        // the face lives, and the caller's span is whatever it happened to be —
+        // often a temporary the asset layer is about to drop.
+        std::vector<std::byte> owned(data.begin(), data.end());
 
         FT_Face face = nullptr;
-        if (FT_New_Face(library->handle, path.string().c_str(), 0, &face) != 0)
+        if (FT_New_Memory_Face(library->handle,
+                               reinterpret_cast<const FT_Byte*>(owned.data()),
+                               static_cast<FT_Long>(owned.size()), 0, &face) != 0)
         {
             return std::unexpected(core::make_error(core::ErrorCode::INVALID_FORMAT,
                                                     "font '{}' could not be read as a typeface",
-                                                    path.string()));
+                                                    description));
         }
 
         // Width zero means "same as the height", which is what a proportional
@@ -159,7 +173,7 @@ namespace cpen::render
                 core::ErrorCode::INVALID_FORMAT,
                 "font '{}' does not support a size of {} pixel(s); it is most likely a "
                 "bitmap typeface with fixed sizes only",
-                path.string(), pixel_size));
+                description, pixel_size));
         }
 
         auto atlas = Texture::storage(config.atlas_size, config.atlas_size, PixelFormat::R8,
@@ -173,7 +187,8 @@ namespace cpen::render
             return std::unexpected(atlas.error());
         }
 
-        Font font{std::move(library), face, std::move(*atlas), pixel_size, config.atlas_size};
+        Font font{std::move(library), face, std::move(owned), std::move(*atlas), pixel_size,
+                  config.atlas_size};
 
         log::info(log::Category::RENDER,
                   "font '{}' loaded at {} pixel(s): line height {}, ascender {}, "
@@ -185,10 +200,11 @@ namespace cpen::render
     }
 
     Font::Font(std::shared_ptr<detail::FreeTypeLibrary> owning_library,
-               FT_FaceRec_* const loaded_face, Texture texture, const std::uint32_t pixel_size,
-               const std::uint32_t atlas_size)
+               FT_FaceRec_* const loaded_face, std::vector<std::byte> data, Texture texture,
+               const std::uint32_t pixel_size, const std::uint32_t atlas_size)
         : library(std::move(owning_library)),
           face(loaded_face),
+          face_data(std::move(data)),
           atlas_texture(std::move(texture)),
           atlas_extent(atlas_size),
           size_in_pixels(pixel_size)
@@ -217,6 +233,7 @@ namespace cpen::render
     Font::Font(Font&& other) noexcept
         : library(std::move(other.library)),
           face(std::exchange(other.face, nullptr)),
+          face_data(std::move(other.face_data)),
           atlas_texture(std::move(other.atlas_texture)),
           glyphs(std::move(other.glyphs)),
           atlas_extent(other.atlas_extent),
@@ -240,6 +257,7 @@ namespace cpen::render
 
             this->library = std::move(other.library);
             this->face = std::exchange(other.face, nullptr);
+            this->face_data = std::move(other.face_data);
             this->atlas_texture = std::move(other.atlas_texture);
             this->glyphs = std::move(other.glyphs);
             this->atlas_extent = other.atlas_extent;
@@ -263,6 +281,10 @@ namespace cpen::render
             FT_Done_Face(this->face);
             this->face = nullptr;
         }
+
+        // Only after the face is gone: FreeType was reading from this buffer.
+        this->face_data.clear();
+        this->face_data.shrink_to_fit();
 
         // The library reference goes last, and only through this member: the face
         // above was made by it and must not outlive it.

@@ -57,6 +57,7 @@ namespace cpen::log
     {
         CORE,
         PLATFORM,
+        ASSETS,
         RENDER,
         PRESENT,
         SCRIPT,
@@ -65,7 +66,7 @@ namespace cpen::log
         APP,
     };
 
-    inline constexpr std::size_t CATEGORY_COUNT = 8;
+    inline constexpr std::size_t CATEGORY_COUNT = 9;
 
     /// The compile-time cutoff as a `Level`. Comparing two enumerators keeps the
     /// check free of the integral-range tautology -Wtype-limits objects to when

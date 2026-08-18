@@ -1,5 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 
+#include "cpen/assets/asset_manager.hh"
+#include "cpen/assets/asset_resolver.hh"
+#include "cpen/assets/virtual_file_system.hh"
 #include "cpen/core/blackboard.hh"
 #include "cpen/core/event_bus.hh"
 #include "cpen/render/renderer.hh"
@@ -21,6 +24,9 @@ using cpen::platform::CloseEvent;
 using cpen::platform::Event;
 using cpen::render::Renderer;
 using cpen::render::Viewport;
+using cpen::assets::AssetManager;
+using cpen::assets::AssetResolver;
+using cpen::assets::VirtualFileSystem;
 using cpen::runtime::GameContext;
 using cpen::runtime::GameState;
 using cpen::runtime::StateStack;
@@ -94,10 +100,20 @@ namespace
         /// them in, and that has nothing to do with a window.
         Renderer renderer{Viewport{}};
 
+        /// An asset manager over a file system with nothing mounted. Every load
+        /// through it fails, which is exactly right here: these states load
+        /// nothing, and the manager is present only because GameContext carries
+        /// one. That it can be built at all without a window is the invariant the
+        /// assets layer keeps for the sake of this file.
+        VirtualFileSystem files;
+        AssetResolver asset_resolver{files};
+        AssetManager assets{files, asset_resolver};
+
         GameContext context{
             .blackboard = blackboard,
             .event_bus = event_bus,
             .renderer = renderer,
+            .assets = assets,
         };
         StateStack stack{context};
 
@@ -429,10 +445,14 @@ TEST_CASE("the stack exits its states when destroyed", "[runtime][state_stack]")
     EventBus event_bus;
     Blackboard blackboard(event_bus);
     Renderer renderer{Viewport{}};
+    VirtualFileSystem files;
+    AssetResolver asset_resolver{files};
+    AssetManager assets{files, asset_resolver};
     GameContext context{
         .blackboard = blackboard,
         .event_bus = event_bus,
         .renderer = renderer,
+        .assets = assets,
     };
 
     {
