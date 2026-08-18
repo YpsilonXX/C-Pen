@@ -1,0 +1,61 @@
+// Every operator the expression grammar has, with its precedence.
+//
+// The Pratt parser reads this table and nothing else: precedence lives here as
+// data rather than in the shape of a recursive-descent call chain, which is the
+// whole reason for choosing Pratt parsing. Adding an operator is one line here
+// plus one case where the compiler emits it; changing a precedence is an edit to
+// one column, not a rewrite of the parser's structure.
+//
+//   CPEN_BINARY_OPERATOR(name, token, precedence, spelling)
+//   CPEN_LOGICAL_OPERATOR(name, token, precedence, spelling)
+//   CPEN_UNARY_OPERATOR(name, token, spelling)
+//
+//       name        the enumerator, and what a syntax-tree dump prints
+//       token       the TokenKind that introduces it
+//       precedence  a Precedence enumerator; higher binds tighter
+//       spelling    how the operator is written, for diagnostics
+//
+// Logical operators are a separate family from the arithmetic ones although they
+// look identical here, because they do not compile the same way: `and` and `or`
+// short-circuit, which is a pair of jumps around the second operand rather than
+// an instruction that consumes two values. Keeping them apart in the syntax tree
+// means the compiler cannot accidentally treat one as the other.
+//
+// Every binary operator associates to the left. There is no right-associative
+// operator in the language yet; when one arrives (exponentiation is the usual
+// first), this table grows a column rather than the parser growing a special
+// case.
+
+#ifndef CPEN_BINARY_OPERATOR
+#define CPEN_BINARY_OPERATOR(name, token, precedence, spelling)
+#endif
+
+#ifndef CPEN_LOGICAL_OPERATOR
+#define CPEN_LOGICAL_OPERATOR(name, token, precedence, spelling)
+#endif
+
+#ifndef CPEN_UNARY_OPERATOR
+#define CPEN_UNARY_OPERATOR(name, token, spelling)
+#endif
+
+CPEN_LOGICAL_OPERATOR(OR,               OR,            OR,         "or")
+CPEN_LOGICAL_OPERATOR(AND,              AND,           AND,        "and")
+
+CPEN_BINARY_OPERATOR(EQUAL,             EQUAL_EQUAL,   EQUALITY,   "==")
+CPEN_BINARY_OPERATOR(NOT_EQUAL,         NOT_EQUAL,     EQUALITY,   "!=")
+CPEN_BINARY_OPERATOR(LESS,              LESS,          COMPARISON, "<")
+CPEN_BINARY_OPERATOR(LESS_OR_EQUAL,     LESS_EQUAL,    COMPARISON, "<=")
+CPEN_BINARY_OPERATOR(GREATER,           GREATER,       COMPARISON, ">")
+CPEN_BINARY_OPERATOR(GREATER_OR_EQUAL,  GREATER_EQUAL, COMPARISON, ">=")
+CPEN_BINARY_OPERATOR(ADD,               PLUS,          TERM,       "+")
+CPEN_BINARY_OPERATOR(SUBTRACT,          MINUS,         TERM,       "-")
+CPEN_BINARY_OPERATOR(MULTIPLY,          STAR,          FACTOR,     "*")
+CPEN_BINARY_OPERATOR(DIVIDE,            SLASH,         FACTOR,     "/")
+CPEN_BINARY_OPERATOR(REMAINDER,         PERCENT,       FACTOR,     "%")
+
+CPEN_UNARY_OPERATOR(NEGATE,             MINUS,                     "-")
+CPEN_UNARY_OPERATOR(NOT,                NOT,                       "not")
+
+#undef CPEN_BINARY_OPERATOR
+#undef CPEN_LOGICAL_OPERATOR
+#undef CPEN_UNARY_OPERATOR

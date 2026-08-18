@@ -2,6 +2,7 @@
 
 #include "cpen/assets/virtual_file_system.hh"
 #include "cpen/core/error.hh"
+#include "cpen/core/file_system.hh"
 #include "support/temporary_directory.hh"
 #include "support/trace.hh"
 
@@ -12,6 +13,7 @@ using cpen::assets::CaseMismatchOutcome;
 using cpen::assets::DEFAULT_PATH_AUDIT;
 using cpen::assets::VirtualFileSystem;
 using cpen::core::ErrorCode;
+using cpen::core::path_to_utf8;
 using cpen::test::TemporaryDirectory;
 using cpen::test::trace;
 using cpen::test::trace_step;
@@ -83,8 +85,17 @@ TEST_CASE("a missing asset names every root that was searched",
 
     // Without the list, "asset not found" leaves the reader guessing which
     // directory the engine actually looked in — the one thing they need.
-    CHECK(located.error().message.find(game.path().string()) != std::string::npos);
-    CHECK(located.error().message.find(engine.path().string()) != std::string::npos);
+    //
+    // Compared against the roots the file system reports, not against the paths
+    // handed to mount, and rendered with the same function the message uses. A
+    // root is canonicalised when it is mounted, and the two spellings of one
+    // directory are genuinely different strings: on Windows the temporary
+    // directory arrives in its short 8.3 form (C:\Users\RUNNER~1\...) and comes
+    // back expanded (C:\Users\runneradmin\...). Comparing to what was passed in
+    // only worked because on Linux canonicalising /tmp changes nothing.
+    REQUIRE(files.roots().size() == 2);
+    CHECK(located.error().message.find(path_to_utf8(files.roots()[0])) != std::string::npos);
+    CHECK(located.error().message.find(path_to_utf8(files.roots()[1])) != std::string::npos);
 
     CHECK_FALSE(files.exists("bg/room.png"));
 }
