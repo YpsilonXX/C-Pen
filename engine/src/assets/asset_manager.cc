@@ -3,6 +3,7 @@
 #include "cpen/assets/placeholder.hh"
 #include "cpen/assets/virtual_file_system.hh"
 #include "cpen/core/log.hh"
+#include "cpen/script/diagnostic.hh"
 
 #include <algorithm>
 #include <format>
@@ -124,6 +125,52 @@ namespace cpen::assets
         return FontReference{this->fonts, *handle};
     }
 
+    std::expected<ScriptReference, core::Error> AssetManager::script(
+        const std::string_view identifier)
+    {
+        std::expected<std::string, core::Error> path =
+            this->resolver->resolve(AssetKind::SCRIPT, identifier);
+
+        if (!path.has_value())
+        {
+            return std::unexpected(
+                this->note_missing(AssetKind::SCRIPT, identifier, std::move(path.error())));
+        }
+
+        std::expected<AssetHandle<script::Script>, core::Error> handle =
+            this->scripts.acquire(*path, [this, &path]
+            {
+                return this->file_system->read_text(*path).and_then(
+                    [&path](std::string source) -> std::expected<script::Script, core::Error>
+                    {
+                        // The text is handed over as a copy and kept here as
+                        // well, because a diagnostic indexes into the exact string
+                        // it was produced from: on failure there is no Script left
+                        // holding the source, and re-reading the file to render
+                        // the message would move every caret if it had changed.
+                        std::expected<script::Script, std::vector<script::Diagnostic>> compiled =
+                            script::make_script(*path, source);
+
+                        if (compiled.has_value())
+                        {
+                            return std::move(*compiled);
+                        }
+
+                        return std::unexpected(core::make_error(
+                            core::ErrorCode::COMPILATION_FAILED, "{}",
+                            script::render_diagnostics(compiled.error(), source, *path)));
+                    });
+            });
+
+        if (!handle.has_value())
+        {
+            return std::unexpected(
+                this->note_missing(AssetKind::SCRIPT, identifier, std::move(handle.error())));
+        }
+
+        return ScriptReference{this->scripts, *handle};
+    }
+
     const render::Texture* AssetManager::placeholder_texture()
     {
         if (this->placeholder.has_value())
@@ -165,7 +212,8 @@ namespace cpen::assets
     {
         const std::size_t collected = this->images.collect_unused() +
                                       this->textures.collect_unused() +
-                                      this->fonts.collect_unused();
+                                      this->fonts.collect_unused() +
+                                      this->scripts.collect_unused();
 
         if (collected > 0)
         {
