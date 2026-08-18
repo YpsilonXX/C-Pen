@@ -1,4 +1,18 @@
-# C-Pen demo game manifest.
-# Format is not yet locked (deferred per architecture decisions) — placeholder fields only.
+# C-Pen demo game manifest. See docs/en/manifest.md.
+
 name = "C-Pen Demo"
-version = "0.0.1"
+version = "0.1.0"
+
+[window]
+title = "C-Pen Demo"
+width = 1280
+height = 720
+
+[screen]
+width = 1920
+height = 1080
+scale = "letterbox"
+
+[story]
+script = "intro"
+label = "start"
