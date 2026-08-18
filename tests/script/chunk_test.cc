@@ -3,6 +3,7 @@
 #include "cpen/core/value.hh"
 #include "cpen/script/chunk.hh"
 #include "support/trace.hh"
+#include "support/value_printing.hh"
 
 #include <cstddef>
 #include <cstdint>
