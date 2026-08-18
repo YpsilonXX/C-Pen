@@ -3,8 +3,9 @@
 - [English](en/) — the source of truth; every other language is a translation of
   these files.
 
-For a game author, the two files to read are
-[the script language](en/dsl.md) and [assets: paths and names](en/assets.md).
+For a game author, the files to read are [the script language](en/dsl.md),
+[the stage](en/stage.md), [assets: paths and names](en/assets.md) and
+[the game manifest](en/manifest.md).
 
 Translations live in sibling directories named after the language code (`ru/`,
 `de/`, ...) and keep the same file names, so a link into one language can be
