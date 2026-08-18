@@ -77,6 +77,8 @@ CPEN_TOKEN_KIND(GREATER_EQUAL,     "'>='")
 
 CPEN_KEYWORD(LABEL,                "label")
 CPEN_KEYWORD(JUMP,                 "jump")
+CPEN_KEYWORD(CALL,                 "call")
+CPEN_KEYWORD(RETURN,               "return")
 CPEN_KEYWORD(SCENE,                "scene")
 CPEN_KEYWORD(SHOW,                 "show")
 CPEN_KEYWORD(HIDE,                 "hide")

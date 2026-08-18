@@ -106,6 +106,17 @@ TEST_CASE("a forward jump is patched once its target is known", "[script][chunk]
             "0006 HALT\n");
 }
 
+TEST_CASE("a call records where to come back to", "[script][chunk]")
+{
+    Chunk chunk;
+    chunk.emit(OpCode::CALL, 0x20, SOMEWHERE);
+    chunk.emit(OpCode::RETURN, SOMEWHERE);
+
+    REQUIRE(compact(disassemble(chunk)) ==
+            "0000 CALL -> 0020\n"
+            "0005 RETURN\n");
+}
+
 TEST_CASE("constants are interned but not conflated", "[script][chunk]")
 {
     Chunk chunk;

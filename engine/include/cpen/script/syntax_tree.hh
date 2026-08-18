@@ -233,6 +233,24 @@ namespace cpen::script
         SourceSpan span{};
     };
 
+    /// `call shared_scene`. Unlike a jump, it remembers where to come back to,
+    /// which is what lets one scene be entered from several places without every
+    /// caller having to be listed at the end of it.
+    struct CallStatement
+    {
+        std::string label{};
+        SourceSpan span{};
+    };
+
+    /// `return`. Takes no target on purpose: a call always comes back to its
+    /// caller, and that invariant is what makes the call stack meaningful in a
+    /// saved game. A section that has to continue somewhere else says so through
+    /// the caller, after the return.
+    struct ReturnStatement
+    {
+        SourceSpan span{};
+    };
+
     struct PauseStatement
     {
         ExpressionId duration{};
@@ -278,6 +296,8 @@ namespace cpen::script
         ShowStatement,
         HideStatement,
         JumpStatement,
+        CallStatement,
+        ReturnStatement,
         PauseStatement,
         IfStatement,
         MenuStatement>;

@@ -26,9 +26,10 @@
 //     constants, but a coordinate position is computed at run time, so their
 //     arity is a decision about the command interface rather than about the
 //     machine. Settled when the compiler and ICommandSink are designed together.
-//   - CALL and RETURN. The call-frame model is part of the design, but v0 has no
-//     way to declare a function, so there is nothing that could emit them and
-//     nothing that could test them.
+//   - Anything to do with functions proper -- passing arguments, addressing local
+//     variables, returning a value. CALL and RETURN below are subroutine calls
+//     and nothing more; v0 has no way to declare a function, so there is nothing
+//     that could emit such instructions and nothing that could test them.
 
 #ifndef CPEN_OPCODE
 #define CPEN_OPCODE(name, first, second, description)
@@ -95,6 +96,21 @@ CPEN_OPCODE(CONCATENATE,       COUNT,      NONE, "joins values into one text val
 CPEN_OPCODE(JUMP,              ADDRESS,    NONE, "continues at the address")
 CPEN_OPCODE(JUMP_IF_FALSE,     ADDRESS,    NONE, "continues at the address if the top value is false")
 CPEN_OPCODE(JUMP_IF_TRUE,      ADDRESS,    NONE, "continues at the address if the top value is true")
+
+/// Continues at the address, remembering where to come back to.
+///
+/// A subroutine call, not a function call: no arguments, no local variables, no
+/// result. What it buys is the return address, and that alone answers the
+/// structure a novel keeps needing -- one scene entered from several places, each
+/// of which continues where it left off. Without it the shared scene has to end
+/// in a chain of tests over a variable saying who entered it, which every new
+/// caller has to edit: the dependency runs backwards, from the shared thing to
+/// everything that uses it.
+///
+/// The frame it pushes is the one the design already requires for functions
+/// later, with no parameters and no locals in it yet.
+CPEN_OPCODE(CALL,              ADDRESS,    NONE, "calls the address, remembering where to return")
+CPEN_OPCODE(RETURN,            NONE,       NONE, "continues where the call came from")
 
 // --- Presentation -----------------------------------------------------------
 //

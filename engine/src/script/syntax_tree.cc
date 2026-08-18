@@ -223,6 +223,14 @@ namespace cpen::script
                     {
                         this->write(depth, std::format("jump {}", quote(node.label)));
                     },
+                    [&](const CallStatement& node)
+                    {
+                        this->write(depth, std::format("call {}", quote(node.label)));
+                    },
+                    [&](const ReturnStatement&)
+                    {
+                        this->write(depth, "return");
+                    },
                     [&](const PauseStatement& node)
                     {
                         this->write(depth, "pause");

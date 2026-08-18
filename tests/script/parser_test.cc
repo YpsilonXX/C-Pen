@@ -259,6 +259,39 @@ TEST_CASE("a conditional keeps its branches in one node", "[script][parser]")
             "      literal 3\n");
 }
 
+TEST_CASE("a scene can be called and returned from", "[script][parser]")
+{
+    // The structure this exists for: one scene entered from several places, each
+    // continuing where it left off. With `jump` alone the shared scene would have
+    // to end in a chain of tests over a variable naming whoever entered it, and
+    // every new caller would have to edit that chain.
+    const Parsed parsed = parse_script("label kitchen:\n"
+                                       "\tcall shared\n"
+                                       "\t\"Вернулись на кухню.\"\n"
+                                       "label shared:\n"
+                                       "\t\"Свет мигнул.\"\n"
+                                       "\treturn\n");
+
+    REQUIRE(parsed.result.diagnostics.empty());
+    REQUIRE(parsed.dumped() ==
+            "label 'kitchen'\n"
+            "  call 'shared'\n"
+            "  say\n"
+            "    text \"Вернулись на кухню.\"\n"
+            "label 'shared'\n"
+            "  say\n"
+            "    text \"Свет мигнул.\"\n"
+            "  return\n");
+}
+
+TEST_CASE("return takes no target", "[script][parser]")
+{
+    // A call always comes back to its caller, and that invariant is what makes the
+    // call stack meaningful in a saved game. Somewhere else to continue is the
+    // caller's decision, after the return.
+    REQUIRE(contains(parse_script("return elsewhere\n").messages(), "end of the line"));
+}
+
 TEST_CASE("a statement that cannot be parsed does not stop the file", "[script][parser]")
 {
     const Parsed parsed = parse_script("label start:\n"

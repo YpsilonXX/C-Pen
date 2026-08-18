@@ -240,7 +240,7 @@ namespace cpen::script
                 // The dispatch table, and the reason a new statement costs one row
                 // and one function rather than another branch in a chain that every
                 // statement pays to walk past.
-                static constexpr std::array<StatementEntry, 9> TABLE = {{
+                static constexpr std::array<StatementEntry, 11> TABLE = {{
                     {TokenKind::LABEL, &Parser::parse_label},
                     {TokenKind::IF, &Parser::parse_if},
                     {TokenKind::MENU, &Parser::parse_menu},
@@ -249,6 +249,8 @@ namespace cpen::script
                     {TokenKind::SHOW, &Parser::parse_show},
                     {TokenKind::HIDE, &Parser::parse_hide},
                     {TokenKind::JUMP, &Parser::parse_jump},
+                    {TokenKind::CALL, &Parser::parse_call},
+                    {TokenKind::RETURN, &Parser::parse_return},
                     {TokenKind::PAUSE, &Parser::parse_pause},
                 }};
 
@@ -585,6 +587,31 @@ namespace cpen::script
                 }
 
                 return this->tree.add(JumpStatement{.label = *label, .span = this->span_since(start)});
+            }
+
+            std::optional<StatementId> parse_call()
+            {
+                const SourceSpan start = this->advance().span;
+
+                const std::optional<std::string> label = this->expect_name("the label to call");
+                if (!label.has_value() || !this->end_of_statement("'call'"))
+                {
+                    return std::nullopt;
+                }
+
+                return this->tree.add(CallStatement{.label = *label, .span = this->span_since(start)});
+            }
+
+            std::optional<StatementId> parse_return()
+            {
+                const SourceSpan start = this->advance().span;
+
+                if (!this->end_of_statement("'return'"))
+                {
+                    return std::nullopt;
+                }
+
+                return this->tree.add(ReturnStatement{.span = this->span_since(start)});
             }
 
             std::optional<StatementId> parse_pause()
